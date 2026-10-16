@@ -6,13 +6,40 @@
 // 일반 마우스 커서는 실제 Sidecar 디스플레이로 넘어가지 못하게 막는다.
 //
 //   swift run SidecarPortrait [--rotate 270|90] [--device "<iPad 이름>"] [--debug-input]
+//   또는 Scripts/build-app.sh로 만든 SidecarPortrait.app을 실행 (메뉴 막대에서 종료)
 
 import AppKit
 import ScreenCaptureKit
 import PrivateAPI
 
+/// .app으로 실행했는지. 이때는 터미널 출력이 보이지 않으므로 알림창과 메뉴 막대를 쓴다.
+let runningAsApp = Bundle.main.bundleURL.pathExtension == "app"
+/// 권한을 줘야 하는 대상. 터미널에서 실행하면 터미널 앱이 권한을 받는다.
+let permissionTarget = runningAsApp ? "SidecarPortrait" : "이 터미널 앱"
+var messages: [String] = []
+
+/// 터미널에 출력하고, 앱으로 실행했을 때 실패 알림창에 보여 주도록 모아 둔다
+func say(_ message: String) {
+    print(message)
+    messages.append(message)
+}
+
+/// 시스템 설정의 개인정보 보호 항목을 연다 (예: "Privacy_ScreenCapture", "Privacy_Accessibility")
+func openPrivacySettings(_ pane: String) {
+    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) }
+}
+
+func showAlert(_ text: String) {
+    NSApp.activate(ignoringOtherApps: true)
+    let alert = NSAlert()
+    alert.messageText = "Sidecar 세로"
+    alert.informativeText = text
+    alert.runModal()
+}
+
 struct Options {
-    var rotation = 270
+    // .app에서는 인자 대신 `defaults write io.github.songyonggyu4006.SidecarPortrait rotate -int 90`으로도 정할 수 있다
+    var rotation = [90, 270].contains(UserDefaults.standard.integer(forKey: "rotate")) ? UserDefaults.standard.integer(forKey: "rotate") : 270
     var device: String?
     var debugInput = false
 
@@ -21,15 +48,16 @@ struct Options {
         while let arg = it.next() {
             switch arg {
             case "--rotate": rotation = Int(it.next() ?? "") ?? 270
+            case "-rotate": _ = it.next() // UserDefaults 인자 형식
             case "--device": device = it.next()
             case "--debug-input": debugInput = true
             default:
-                print("사용법: SidecarPortrait [--rotate 270|90] [--device \"iPad 이름\"] [--debug-input]")
+                say("사용법: SidecarPortrait [--rotate 270|90] [--device \"iPad 이름\"] [--debug-input]")
                 exit(1)
             }
         }
         guard rotation == 90 || rotation == 270 else {
-            print("--rotate는 90 또는 270만 가능해요")
+            say("--rotate는 90 또는 270만 가능해요")
             exit(1)
         }
     }
@@ -74,7 +102,7 @@ func connectSidecar(_ name: String, size: CGSize) -> Bool {
         finished = true
     }
     _ = waitUntil(timeout: 30) { finished }
-    if let failure { print("Sidecar 연결 실패: \(failure.localizedDescription)") }
+    if let failure { say("Sidecar 연결 실패: \(failure.localizedDescription)") }
     return finished && failure == nil
 }
 
@@ -93,14 +121,14 @@ func landscapeSidecarDisplay(device: String?) -> CGDirectDisplayID? {
 
     // 연결된 기기의 이름은 따로 알 수 없어서 --device나 첫 번째 기기를 쓴다
     guard let name = device ?? SPSidecar.deviceNames().first else {
-        print("Sidecar 기기가 없어요. 같은 Apple 계정, Wi‑Fi·Bluetooth, iPad 잠금 해제를 확인해 주세요.")
+        say("Sidecar 기기가 없어요. 같은 Apple 계정, Wi‑Fi·Bluetooth, iPad 잠금 해제를 확인해 주세요.")
         return nil
     }
     if sidecarDisplay() != nil {
-        print("Sidecar가 세로로 연결돼 있어서 가로로 다시 연결해요 (\(name))")
+        say("Sidecar가 세로로 연결돼 있어서 가로로 다시 연결해요 (\(name))")
         disconnectSidecar(name)
     } else {
-        print("Sidecar 연결 중: \(name)")
+        say("Sidecar 연결 중: \(name)")
     }
     guard connectSidecar(name, size: landscape) else { return nil }
     _ = waitUntil(timeout: 10) { sidecarDisplay() != nil }
@@ -343,7 +371,8 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        print("캡처가 멈췄어요: \(error.localizedDescription)")
+        say("캡처가 멈췄어요: \(error.localizedDescription)")
+        if runningAsApp { showAlert(messages.last ?? "") }
         NSApp.terminate(nil)
     }
 }
@@ -353,22 +382,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var virtualDisplay: SPVirtualDisplay?
     var mirror: Mirror?
     var fence: CursorFence?
+    var statusItem: NSStatusItem?
 
     init(options: Options) { self.options = options }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if runningAsApp { addStatusItem() }
+        // 실행 루프가 돌기 시작한 뒤에 시작한다 (알림창·메뉴 막대가 이벤트를 받을 수 있도록)
+        DispatchQueue.main.async { self.start() }
+    }
+
+    func start() {
         guard let sidecar = landscapeSidecarDisplay(device: options.device) else { return fail() }
         let landscape = CGDisplayBounds(sidecar).size
         let portrait = CGSize(width: landscape.height, height: landscape.width)
-        print("Sidecar 화면: \(Int(landscape.width))x\(Int(landscape.height)) → 가상 디스플레이 \(Int(portrait.width))x\(Int(portrait.height))")
+        say("Sidecar 화면: \(Int(landscape.width))x\(Int(landscape.height)) → 가상 디스플레이 \(Int(portrait.width))x\(Int(portrait.height))")
 
         guard let virtual = SPVirtualDisplay(name: "Sidecar 세로", width: UInt32(portrait.width), height: UInt32(portrait.height), hiDPI: true) else {
-            print("가상 디스플레이를 만들지 못했어요")
+            say("가상 디스플레이를 만들지 못했어요. SidecarPortrait가 이미 실행 중이면 먼저 종료해 주세요.")
             return fail()
         }
         virtualDisplay = virtual
         guard waitUntil(timeout: 10, { activeDisplays().contains(virtual.displayID) }) else {
-            print("가상 디스플레이가 화면 목록에 나타나지 않아요")
+            say("가상 디스플레이가 화면 목록에 나타나지 않아요")
             return fail()
         }
         arrange(virtual: virtual.displayID, sidecar: sidecar)
@@ -380,26 +416,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startInput(mirror: mirror, virtual: CGDisplayBounds(virtual.displayID), sidecar: CGDisplayBounds(sidecar))
         let mode = CGDisplayCopyDisplayMode(virtual.displayID)
         let pixels = CGSize(width: mode?.pixelWidth ?? Int(portrait.width * 2), height: mode?.pixelHeight ?? Int(portrait.height * 2))
-        print("가상 디스플레이 \(virtual.displayID): \(mode?.width ?? 0)x\(mode?.height ?? 0) (픽셀 \(Int(pixels.width))x\(Int(pixels.height)))")
+        say("가상 디스플레이 \(virtual.displayID): \(mode?.width ?? 0)x\(mode?.height ?? 0) (픽셀 \(Int(pixels.width))x\(Int(pixels.height)))")
 
         Task { @MainActor in
             do {
                 try await mirror.start(displayID: virtual.displayID, pixelSize: pixels)
-                print("미러링 시작 (회전 \(self.options.rotation)도). 창을 'Sidecar 세로' 디스플레이로 옮기세요. 종료: Ctrl+C")
+                say("미러링 시작 (회전 \(self.options.rotation)도). 창을 'Sidecar 세로' 디스플레이로 옮기세요. 종료: \(runningAsApp ? "메뉴 막대 아이콘" : "Ctrl+C")")
             } catch {
-                print("캡처 시작 실패: \(error.localizedDescription)")
-                print("시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 이 터미널 앱을 허용해 주세요.")
+                say("캡처 시작 실패: \(error.localizedDescription)")
+                say("시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 \(permissionTarget)을(를) 허용해 주세요.")
+                if runningAsApp { openPrivacySettings("Privacy_ScreenCapture") }
                 self.fail()
             }
         }
+    }
+
+    /// Dock 아이콘이 없으므로 메뉴 막대 아이콘으로 종료한다
+    func addStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = NSImage(systemSymbolName: "ipad", accessibilityDescription: "Sidecar 세로")
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Sidecar 세로 (회전 \(options.rotation)도)", action: nil, keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        item.menu = menu
+        statusItem = item
     }
 
     /// 입력 변환과 커서 가두기는 손쉬운 사용 권한이 있어야 한다. 없으면 화면 미러링만 한다.
     func startInput(mirror: Mirror, virtual: CGRect, sidecar: CGRect) {
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         guard AXIsProcessTrustedWithOptions(prompt) else {
-            print("손쉬운 사용 권한이 없어서 iPad 터치·펜슬 입력 변환과 커서 가두기를 끕니다.")
-            print("시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 이 터미널 앱을 허용한 뒤 다시 실행해 주세요.")
+            say("손쉬운 사용 권한이 없어서 iPad 터치·펜슬 입력 변환과 커서 가두기를 끕니다.")
+            say("시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 \(permissionTarget)을(를) 허용한 뒤 다시 실행해 주세요.")
+            if runningAsApp { showAlert(messages.suffix(2).joined(separator: "\n\n")) }
             return
         }
         mirror.inputTarget = virtual
@@ -408,11 +458,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if fence.start() {
             self.fence = fence
         } else {
-            print("이벤트 탭을 만들지 못해서 마우스 커서가 Sidecar 화면으로 넘어갈 수 있어요.")
+            say("이벤트 탭을 만들지 못해서 마우스 커서가 Sidecar 화면으로 넘어갈 수 있어요.")
         }
     }
 
     func fail() {
+        if runningAsApp { showAlert(messages.joined(separator: "\n")) }
         NSApp.terminate(nil)
         exit(1)
     }

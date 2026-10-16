@@ -25,7 +25,19 @@ iPad Sidecar를 **세로 모드**로 쓰기 위한 실험용 macOS 앱.
 - Sidecar를 지원하는 iPad (iPad Pro 12.9인치 5세대에서 테스트)
 - Xcode 또는 Command Line Tools (Swift 6)
 
-## 실행
+## 앱으로 실행 (권장)
+
+```bash
+Scripts/build-app.sh --install   # ~/Applications/SidecarPortrait.app 생성
+```
+
+- 그다음부터는 Finder나 Spotlight에서 **SidecarPortrait**를 열면 돼요. Dock 아이콘 대신 메뉴 막대에 iPad 아이콘이 생기고, 거기서 종료해요.
+- 처음 실행할 때 **화면 및 시스템 오디오 녹음**, **손쉬운 사용** 권한을 SidecarPortrait에 허용한 뒤 다시 실행하세요.
+- 키체인에 Apple Development 인증서가 있으면 그것으로 서명해서, 다시 빌드해도 권한이 유지돼요. 없으면 ad-hoc 서명이라 빌드할 때마다 다시 허용해야 할 수 있어요. 다른 인증서는 `SIGN_IDENTITY="..." Scripts/build-app.sh`로 지정해요.
+- 회전 방향은 `defaults write io.github.songyonggyu4006.SidecarPortrait rotate -int 90`으로 바꿔요 (기본 270).
+- `--install` 없이 실행하면 `build/SidecarPortrait.app`만 만들어요.
+
+## 터미널에서 실행
 
 ```bash
 swift build
@@ -45,6 +57,7 @@ swift build
 | --- | --- |
 | `Sources/PrivateAPI` | `CGVirtualDisplay`, SidecarCore, MonitorPanel 비공개 API를 감싼 Objective-C 래퍼 |
 | `Sources/SidecarPortrait` | 가상 디스플레이 생성, 캡처, 회전해서 그리는 앱 |
+| `Scripts/build-app.sh` | `.app` 번들을 만들고 서명하는 스크립트 |
 | `Tools/sidecar-portrait.m` | Sidecar를 원하는 크기로 연결·해제하는 실험용 CLI |
 
 비공개 API 시그니처는 Objective-C 런타임(`objc_copyClassNamesForImage`, `class_copyMethodList`)으로 조회했어요. Apple의 코드나 헤더는 포함하지 않았어요.
