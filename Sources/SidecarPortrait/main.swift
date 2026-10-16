@@ -2,8 +2,10 @@
 // iPad Sidecar 앱은 항상 가로 캔버스로만 그리므로, 세로 가상 디스플레이를 만들어
 // 그 화면을 캡처한 뒤 가로 Sidecar 화면에 90도 돌려 꽉 차게 그린다.
 // iPad는 가로 상태에서 회전 잠금을 켠 뒤 세로로 돌려 들면 된다.
+// iPad 터치·펜슬 입력은 회전을 되돌려 가상 디스플레이로 다시 보내고,
+// 일반 마우스 커서는 실제 Sidecar 디스플레이로 넘어가지 못하게 막는다.
 //
-//   swift run SidecarPortrait [--rotate 270|90] [--device "<iPad 이름>"]
+//   swift run SidecarPortrait [--rotate 270|90] [--device "<iPad 이름>"] [--debug-input]
 
 import AppKit
 import ScreenCaptureKit
@@ -12,6 +14,7 @@ import PrivateAPI
 struct Options {
     var rotation = 270
     var device: String?
+    var debugInput = false
 
     init(_ args: [String]) {
         var it = args.dropFirst().makeIterator()
@@ -19,8 +22,9 @@ struct Options {
             switch arg {
             case "--rotate": rotation = Int(it.next() ?? "") ?? 270
             case "--device": device = it.next()
+            case "--debug-input": debugInput = true
             default:
-                print("사용법: SidecarPortrait [--rotate 270|90] [--device \"iPad 이름\"]")
+                print("사용법: SidecarPortrait [--rotate 270|90] [--device \"iPad 이름\"] [--debug-input]")
                 exit(1)
             }
         }
@@ -114,13 +118,139 @@ func arrange(virtual: CGDirectDisplayID, sidecar: CGDirectDisplayID) {
     CGCompleteDisplayConfiguration(config, .forSession)
 }
 
+// MARK: - 입력 좌표 변환
+
+/// 미러링 창 좌표(왼쪽 아래 원점, 가로 W×H)를 세로 가상 디스플레이 안의 좌표(왼쪽 위 원점, H×W)로 바꾼다.
+/// 270도: 레이어를 반시계로 90도 돌려 그리므로 창 왼쪽 아래가 세로 화면 왼쪽 위다.
+/// 90도: 시계로 90도 돌려 그리므로 창 오른쪽 위가 세로 화면 왼쪽 위다.
+func portraitPoint(_ p: CGPoint, windowSize s: CGSize, rotation: Int) -> CGPoint {
+    rotation == 90 ? CGPoint(x: s.height - p.y, y: s.width - p.x) : CGPoint(x: p.y, y: p.x)
+}
+
+/// 창 화면 기준(아래쪽이 +y) 방향 벡터를 세로 화면 기준으로 돌린다. 스크롤 양에 쓴다.
+func portraitVector(dx: Double, dy: Double, rotation: Int) -> (dx: Double, dy: Double) {
+    rotation == 90 ? (dy, -dx) : (-dy, dx)
+}
+
+/// 우리가 다시 보낸 이벤트 표시. 이벤트 탭이 이것은 건드리지 않는다.
+let forwardedEventMarker: Int64 = 0x5343_5054 // "SCPT"
+
+/// 미러링 창은 클릭돼도 앱을 활성화하거나 키 창이 되지 않아야 원래 앱의 포커스가 유지된다
+final class MirrorPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// 미러링 창으로 들어오는 마우스 이벤트(= iPad 터치·펜슬)를 모두 넘겨준다
+final class InputView: NSView {
+    var onEvent: ((NSEvent) -> Void)?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseDown(with event: NSEvent) { onEvent?(event) }
+    override func mouseDragged(with event: NSEvent) { onEvent?(event) }
+    override func mouseUp(with event: NSEvent) { onEvent?(event) }
+    override func mouseMoved(with event: NSEvent) { onEvent?(event) }
+    override func rightMouseDown(with event: NSEvent) { onEvent?(event) }
+    override func rightMouseDragged(with event: NSEvent) { onEvent?(event) }
+    override func rightMouseUp(with event: NSEvent) { onEvent?(event) }
+    override func otherMouseDown(with event: NSEvent) { onEvent?(event) }
+    override func otherMouseDragged(with event: NSEvent) { onEvent?(event) }
+    override func otherMouseUp(with event: NSEvent) { onEvent?(event) }
+    override func scrollWheel(with event: NSEvent) { onEvent?(event) }
+}
+
+/// 일반 마우스 커서가 실제 Sidecar 디스플레이로 넘어가면 가상 디스플레이 가장자리로 되돌린다.
+/// iPad 터치·펜슬은 Sidecar 화면 아무 곳에나 바로 찍히므로 그대로 미러링 창에 보낸다.
+final class CursorFence {
+    let sidecar: CGRect
+    let virtual: CGRect
+    let debug: Bool
+    private var tap: CFMachPort?
+
+    init(sidecar: CGRect, virtual: CGRect, debug: Bool) {
+        self.sidecar = sidecar
+        self.virtual = virtual
+        self.debug = debug
+    }
+
+    /// 손쉬운 사용 권한이 없으면 탭을 만들 수 없어 false를 돌려준다
+    func start() -> Bool {
+        let types: [CGEventType] = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+                                    .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        let mask = types.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask,
+            callback: { _, type, event, refcon in
+                Unmanaged<CursorFence>.fromOpaque(refcon!).takeUnretainedValue().handle(type, event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque())
+        else { return false }
+        self.tap = tap
+        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        return true
+    }
+
+    private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let pass = Unmanaged.passUnretained(event)
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return pass
+        }
+        let loc = event.location
+        guard sidecar.contains(loc), event.getIntegerValueField(.eventSourceUserData) != forwardedEventMarker else { return pass }
+
+        let dx = event.getDoubleValueField(.mouseEventDeltaX)
+        let dy = event.getDoubleValueField(.mouseEventDeltaY)
+        let subtype = event.getIntegerValueField(.mouseEventSubtype)
+        let isTablet = subtype == Int64(CGEventMouseSubtype.tabletPoint.rawValue)
+            || subtype == Int64(CGEventMouseSubtype.tabletProximity.rawValue)
+        // 일반 마우스는 가상 디스플레이 가장자리를 조금씩 넘어 들어온다.
+        // 바로 전 위치가 Sidecar 밖이고 이동량이 작을 때만 마우스로 본다.
+        let previous = CGPoint(x: loc.x - dx, y: loc.y - dy)
+        let isMouseCrossing = !isTablet && !sidecar.contains(previous) && hypot(dx, dy) <= 64
+            && type != .leftMouseDown && type != .rightMouseDown && type != .otherMouseDown
+
+        if debug {
+            let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
+            let state = event.getIntegerValueField(.eventSourceStateID)
+            print("[입력] type=\(type.rawValue) loc=(\(Int(loc.x)),\(Int(loc.y))) delta=(\(dx),\(dy)) subtype=\(subtype) pid=\(pid) state=\(state) → \(isMouseCrossing ? "마우스, 되돌림" : "iPad 입력")")
+        }
+        guard isMouseCrossing else { return pass }
+
+        let clamped = CGPoint(x: min(max(loc.x, virtual.minX), virtual.maxX - 1),
+                              y: min(max(loc.y, virtual.minY), virtual.maxY - 1))
+        event.location = clamped
+        CGWarpMouseCursorPosition(clamped)
+        CGAssociateMouseAndMouseCursorPosition(1)
+        return pass
+    }
+}
+
+// MARK: - 미러링
+
 final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     let window: NSWindow
     let content = CALayer()
+    let rotation: Int
     var stream: SCStream?
+    /// 입력을 다시 보낼 가상 디스플레이의 전역 좌표. nil이면 입력 변환을 하지 않는다.
+    var inputTarget: CGRect?
+    var debugInput = false
 
     init(frame: NSRect, portraitSize: CGSize, rotation: Int) {
-        window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        let panel = MirrorPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = true
+        window = panel
+        self.rotation = rotation
         super.init()
         window.setFrame(frame, display: false)
         window.backgroundColor = .black
@@ -128,9 +258,10 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         window.isReleasedWhenClosed = false
 
-        let root = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        let root = InputView(frame: NSRect(origin: .zero, size: frame.size))
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.black.cgColor
+        root.onEvent = { [weak self] in self?.forward($0) }
         window.contentView = root
 
         // 세로 크기의 레이어를 가운데 두고 돌리면 가로 화면을 꽉 채운다
@@ -176,6 +307,41 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         CATransaction.commit()
     }
 
+    /// 미러링 창 이벤트를 세로 가상 디스플레이 위치로 옮겨 다시 보낸다.
+    /// 원래 이벤트를 복사하므로 클릭 횟수, 펜슬 압력 같은 값은 그대로 유지된다.
+    func forward(_ event: NSEvent) {
+        guard let target = inputTarget, let cg = event.cgEvent?.copy() else { return }
+        let p = portraitPoint(event.locationInWindow, windowSize: window.frame.size, rotation: rotation)
+        cg.location = CGPoint(x: target.minX + min(max(p.x, 0), target.width - 1),
+                              y: target.minY + min(max(p.y, 0), target.height - 1))
+
+        if event.type == .scrollWheel {
+            // 스크롤 축 1은 세로, 2는 가로. 창 기준 방향을 세로 화면 기준으로 돌린다.
+            let pairs: [(CGEventField, CGEventField)] = [
+                (.scrollWheelEventDeltaAxis2, .scrollWheelEventDeltaAxis1),
+                (.scrollWheelEventPointDeltaAxis2, .scrollWheelEventPointDeltaAxis1),
+                (.scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis1),
+            ]
+            for (xField, yField) in pairs {
+                if xField == .scrollWheelEventFixedPtDeltaAxis2 {
+                    let v = portraitVector(dx: cg.getDoubleValueField(xField), dy: cg.getDoubleValueField(yField), rotation: rotation)
+                    cg.setDoubleValueField(xField, value: v.dx)
+                    cg.setDoubleValueField(yField, value: v.dy)
+                } else {
+                    let v = portraitVector(dx: Double(cg.getIntegerValueField(xField)), dy: Double(cg.getIntegerValueField(yField)), rotation: rotation)
+                    cg.setIntegerValueField(xField, value: Int64(v.dx))
+                    cg.setIntegerValueField(yField, value: Int64(v.dy))
+                }
+            }
+        }
+        if debugInput {
+            let w = event.locationInWindow
+            print("[전달] \(event.type.rawValue) 창(\(Int(w.x)),\(Int(w.y))) → 가상(\(Int(cg.location.x)),\(Int(cg.location.y)))")
+        }
+        cg.setIntegerValueField(.eventSourceUserData, value: forwardedEventMarker)
+        cg.post(tap: .cghidEventTap)
+    }
+
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         print("캡처가 멈췄어요: \(error.localizedDescription)")
         NSApp.terminate(nil)
@@ -186,6 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let options: Options
     var virtualDisplay: SPVirtualDisplay?
     var mirror: Mirror?
+    var fence: CursorFence?
 
     init(options: Options) { self.options = options }
 
@@ -210,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 배치를 바꾼 뒤의 Sidecar 좌표로 창을 만든다
         let mirror = Mirror(frame: cocoaFrame(of: sidecar), portraitSize: portrait, rotation: options.rotation)
         self.mirror = mirror
+        startInput(mirror: mirror, virtual: CGDisplayBounds(virtual.displayID), sidecar: CGDisplayBounds(sidecar))
         let mode = CGDisplayCopyDisplayMode(virtual.displayID)
         let pixels = CGSize(width: mode?.pixelWidth ?? Int(portrait.width * 2), height: mode?.pixelHeight ?? Int(portrait.height * 2))
         print("가상 디스플레이 \(virtual.displayID): \(mode?.width ?? 0)x\(mode?.height ?? 0) (픽셀 \(Int(pixels.width))x\(Int(pixels.height)))")
@@ -223,6 +391,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 이 터미널 앱을 허용해 주세요.")
                 self.fail()
             }
+        }
+    }
+
+    /// 입력 변환과 커서 가두기는 손쉬운 사용 권한이 있어야 한다. 없으면 화면 미러링만 한다.
+    func startInput(mirror: Mirror, virtual: CGRect, sidecar: CGRect) {
+        let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        guard AXIsProcessTrustedWithOptions(prompt) else {
+            print("손쉬운 사용 권한이 없어서 iPad 터치·펜슬 입력 변환과 커서 가두기를 끕니다.")
+            print("시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 이 터미널 앱을 허용한 뒤 다시 실행해 주세요.")
+            return
+        }
+        mirror.inputTarget = virtual
+        mirror.debugInput = options.debugInput
+        let fence = CursorFence(sidecar: sidecar, virtual: virtual, debug: options.debugInput)
+        if fence.start() {
+            self.fence = fence
+        } else {
+            print("이벤트 탭을 만들지 못해서 마우스 커서가 Sidecar 화면으로 넘어갈 수 있어요.")
         }
     }
 
