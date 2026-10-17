@@ -201,6 +201,8 @@ final class CursorFence {
     let virtual: CGRect
     let debug: Bool
     private var tap: CFMachPort?
+    /// 이 탭이 마지막으로 본 커서 위치 (되돌렸으면 되돌린 위치)
+    private var lastLocation: CGPoint?
 
     init(sidecar: CGRect, virtual: CGRect, debug: Bool) {
         self.sidecar = sidecar
@@ -233,29 +235,38 @@ final class CursorFence {
             return pass
         }
         let loc = event.location
+        let last = lastLocation ?? CGEvent(source: nil)?.location ?? loc
+        lastLocation = loc
         guard sidecar.contains(loc), event.getIntegerValueField(.eventSourceUserData) != forwardedEventMarker else { return pass }
 
-        let dx = event.getDoubleValueField(.mouseEventDeltaX)
-        let dy = event.getDoubleValueField(.mouseEventDeltaY)
         let subtype = event.getIntegerValueField(.mouseEventSubtype)
         let isTablet = subtype == Int64(CGEventMouseSubtype.tabletPoint.rawValue)
             || subtype == Int64(CGEventMouseSubtype.tabletProximity.rawValue)
-        // 일반 마우스는 가상 디스플레이 가장자리를 조금씩 넘어 들어온다.
-        // 바로 전 위치가 Sidecar 밖이고 이동량이 작을 때만 마우스로 본다.
-        let previous = CGPoint(x: loc.x - dx, y: loc.y - dy)
-        let isMouseCrossing = !isTablet && !sidecar.contains(previous) && hypot(dx, dy) <= 64
-            && type != .leftMouseDown && type != .rightMouseDown && type != .otherMouseDown
+        let isDown = type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown
+        // 일반 마우스는 Sidecar 밖에서 조금씩 이어서 들어온다. iPad 입력은 미러링 창이 곧바로
+        // 가상 디스플레이로 다시 보내므로, 그 직전 커서는 Sidecar 화면과 동떨어진 곳에 있다.
+        // 이벤트의 delta는 가속·되돌리기 때문에 실제 커서 이동과 어긋나서, 직접 기록한 직전 위치와 비교한다.
+        let jump = hypot(loc.x - last.x, loc.y - last.y)
+        let isMouseCrossing = !isTablet && !isDown && !sidecar.contains(last) && jump <= 160
 
         if debug {
-            let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
-            let state = event.getIntegerValueField(.eventSourceStateID)
-            print("[입력] type=\(type.rawValue) loc=(\(Int(loc.x)),\(Int(loc.y))) delta=(\(dx),\(dy)) subtype=\(subtype) pid=\(pid) state=\(state) → \(isMouseCrossing ? "마우스, 되돌림" : "iPad 입력")")
+            let dx = event.getDoubleValueField(.mouseEventDeltaX)
+            let dy = event.getDoubleValueField(.mouseEventDeltaY)
+            // iPad와 마우스를 구분할 단서를 찾기 위해 0이 아닌 정수 필드를 모두 찍는다
+            let fields = (0..<200).compactMap { n -> String? in
+                guard let field = CGEventField(rawValue: UInt32(n)) else { return nil }
+                let v = event.getIntegerValueField(field)
+                return v == 0 ? nil : "\(n):\(v)"
+            }.joined(separator: " ")
+            print("[입력] type=\(type.rawValue) loc=(\(Int(loc.x)),\(Int(loc.y))) 직전=(\(Int(last.x)),\(Int(last.y))) delta=(\(dx),\(dy)) → \(isMouseCrossing ? "마우스, 되돌림" : "iPad 입력")")
+            print("       필드 \(fields)")
         }
         guard isMouseCrossing else { return pass }
 
         let clamped = CGPoint(x: min(max(loc.x, virtual.minX), virtual.maxX - 1),
                               y: min(max(loc.y, virtual.minY), virtual.maxY - 1))
         event.location = clamped
+        lastLocation = clamped
         CGWarpMouseCursorPosition(clamped)
         CGAssociateMouseAndMouseCursorPosition(1)
         return pass
