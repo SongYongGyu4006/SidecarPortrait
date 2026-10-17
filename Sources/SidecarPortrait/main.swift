@@ -203,6 +203,11 @@ final class CursorFence {
     private var tap: CFMachPort?
     /// 이 탭이 마지막으로 본 커서 위치 (되돌렸으면 되돌린 위치)
     private var lastLocation: CGPoint?
+    private let source: CGEventSource? = {
+        let source = CGEventSource(stateID: .hidSystemState)
+        source?.localEventsSuppressionInterval = 0
+        return source
+    }()
 
     init(sidecar: CGRect, virtual: CGRect, debug: Bool) {
         self.sidecar = sidecar
@@ -265,11 +270,15 @@ final class CursorFence {
 
         let clamped = CGPoint(x: min(max(loc.x, virtual.minX), virtual.maxX - 1),
                               y: min(max(loc.y, virtual.minY), virtual.maxY - 1))
-        event.location = clamped
+        // CGWarpMouseCursorPosition은 매번 0.25초 동안 마우스 입력을 억제해서, 계속 밀면 커서가 얼어붙는다.
+        // 대신 원래 이벤트를 버리고, 억제 시간이 0인 소스로 되돌린 위치의 이동 이벤트를 다시 보낸다.
         lastLocation = clamped
-        CGWarpMouseCursorPosition(clamped)
-        CGAssociateMouseAndMouseCursorPosition(1)
-        return pass
+        let button: CGMouseButton = type == .rightMouseDragged ? .right : type == .otherMouseDragged ? .center : .left
+        if let moved = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: clamped, mouseButton: button) {
+            moved.setIntegerValueField(.eventSourceUserData, value: forwardedEventMarker)
+            moved.post(tap: .cghidEventTap)
+        }
+        return nil
     }
 }
 
