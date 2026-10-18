@@ -57,6 +57,7 @@ swift build
 | --- | --- |
 | `Sources/PrivateAPI` | `CGVirtualDisplay`, SidecarCore, MonitorPanel 비공개 API를 감싼 Objective-C 래퍼 |
 | `Sources/SidecarPortrait` | 가상 디스플레이 생성, 캡처, 회전해서 그리는 앱 |
+| `Sources/UsageDashboard` | 가로 Sidecar 화면에 띄우는 Claude·Gemini 사용량 대시보드 |
 | `Scripts/build-app.sh` | `.app` 번들을 만들고 서명하는 스크립트 |
 | `Tools/sidecar-portrait.m` | Sidecar를 원하는 크기로 연결·해제하는 실험용 CLI |
 
@@ -75,6 +76,22 @@ swift build
 - 마우스와 iPad 입력은 "직전 커서가 Sidecar 밖에 있었고, 거기서 160pt 안쪽으로 이어서 들어왔는가"로 구분해요. 커서가 이미 세로 화면 모서리(270도면 오른쪽 위, 90도면 오른쪽 아래)에 있을 때 같은 모서리를 iPad로 찍으면 마우스로 오인될 수 있어요. `--debug-input`은 이벤트의 0이 아닌 필드를 모두 찍으니, iPad 입력만의 표시를 찾으면 더 정확하게 구분할 수 있어요.
 - 손가락 제스처(확대·회전 등 트랙패드식 제스처)와 스크롤 관성 단계(phase)는 따로 변환하지 않아요.
 - 키보드 입력과 iPad의 Sidecar 사이드바·Touch Bar는 그대로예요.
+
+## AI 사용량 대시보드 (UsageDashboard)
+
+iPad를 **가로** Sidecar로 연결해서 화면 전체에 Claude·Gemini 사용량을 띄우는 별도 앱이에요.
+
+```bash
+Scripts/build-app.sh UsageDashboard --install   # ~/Applications/UsageDashboard.app
+```
+
+- **계정 한도(모든 기기 합산)**: claude.ai와 Gemini의 공식 사용량 페이지(`claude.ai/settings/usage`, `gemini.google.com/usage`)를 보이지 않는 웹 뷰로 5분마다 열어 "n% 사용됨"과 초기화 시각만 읽어 원형 게이지로 그려요.
+  - 처음 한 번 메뉴 막대 아이콘 → **Claude 로그인…**, **Gemini 로그인…**에서 직접 로그인하고 창을 닫으세요. 로그인 정보는 이 앱 전용 웹 저장소에만 남고, 메뉴의 **로그아웃**으로 지울 수 있어요.
+  - 다른 앱의 토큰이나 키체인은 읽지 않아요. 페이지 구조가 바뀌면 "사용량 표시를 찾지 못했어요"가 떠요. 주소는 `defaults write io.github.songyonggyu4006.UsageDashboard claudeUsageURL <주소>`(또는 `geminiUsageURL`)로 바꿀 수 있어요.
+- **화면 스타일**: 레트로 픽셀, 미니멀, 네온 사이버펑크, 자동차 계기판 4가지에 각각 라이트·다크 모드가 있어요. 메뉴 막대 아이콘의 **화면 스타일**, **화면 모드**에서 고르거나 iPad 화면을 탭하면 다음 스타일로 바뀌어요. 고른 값은 다음 실행에도 유지돼요.
+- **토큰 그래프(이 Mac만)**: 30초마다 로컬 기록을 읽어요. Claude는 `~/.claude/projects/**/*.jsonl`(Claude Code·데스크톱 앱 Code 탭), Gemini는 `~/.gemini/tmp/*/chats/*.json`(Gemini CLI)이에요.
+- Sidecar가 연결돼 있지 않으면 첫 번째 iPad를 연결하고, 종료할 때 연결을 끊어요. 기기는 `--device "iPad 이름"`으로 고를 수 있어요. SidecarPortrait와 같은 Sidecar 화면을 쓰므로 둘을 함께 실행하지 마세요.
+- 확인용 옵션: `--window`(지금 화면에 창으로), `--snapshot dash.png`(1366×1024 PNG 저장, `--style retro|minimal|neon|gauge`·`--appearance light|dark`와 함께 쓰면 그 화면으로 저장), `--dump-account claude|gemini out.txt`(사용량 페이지에서 읽은 글자 저장, 계정 정보가 들어 있을 수 있으니 공유하지 마세요). 로그인 정보가 앱 번들 ID에 묶여 있어서 `--dump-account`는 `build/UsageDashboard.app/Contents/MacOS/UsageDashboard`로 실행하세요.
 
 ## 라이선스
 
