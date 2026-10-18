@@ -1,7 +1,8 @@
 #!/bin/bash
-# SidecarPortrait.app을 만든다.
-#   Scripts/build-app.sh            # build/SidecarPortrait.app 생성
-#   Scripts/build-app.sh --install  # ~/Applications에 복사까지
+# SidecarPortrait.app(기본) 또는 UsageDashboard.app을 만든다.
+#   Scripts/build-app.sh                           # build/SidecarPortrait.app 생성
+#   Scripts/build-app.sh --install                 # ~/Applications에 복사까지
+#   Scripts/build-app.sh UsageDashboard --install  # 사용량 대시보드 앱
 #
 # 서명: SIGN_IDENTITY 환경 변수 > 키체인의 첫 "Apple Development"/"Developer ID" 인증서 > ad-hoc.
 # 인증서로 서명하면 다시 빌드해도 화면 녹음·손쉬운 사용 권한이 유지된다.
@@ -9,11 +10,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NAME=SidecarPortrait
-BUNDLE_ID=io.github.songyonggyu4006.SidecarPortrait
+DISPLAY_NAME="Sidecar 세로"
+if [ "${1:-}" = "UsageDashboard" ]; then
+    NAME=UsageDashboard
+    DISPLAY_NAME="AI 사용량"
+    shift
+fi
+BUNDLE_ID=io.github.songyonggyu4006.$NAME
 VERSION=$(git describe --tags --always 2>/dev/null || echo 0.1)
 APP=build/$NAME.app
 
-swift build -c release --arch arm64
+swift build -c release --arch arm64 --product "$NAME"
 BIN=$(swift build -c release --arch arm64 --show-bin-path)/$NAME
 
 rm -rf "$APP"
@@ -27,7 +34,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>$NAME</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundleName</key><string>$NAME</string>
-    <key>CFBundleDisplayName</key><string>Sidecar 세로</string>
+    <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>

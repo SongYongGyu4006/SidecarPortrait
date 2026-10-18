@@ -12,5 +12,11 @@ let package = Package(
             dependencies: ["PrivateAPI"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // 가로 Sidecar 화면에 띄우는 Claude·Gemini 사용량 대시보드
+        .executableTarget(
+            name: "UsageDashboard",
+            dependencies: ["PrivateAPI"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )
