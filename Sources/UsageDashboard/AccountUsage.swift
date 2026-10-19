@@ -160,9 +160,13 @@ func parseLimits(_ text: String) -> [LimitGauge] {
 
 @MainActor final class AccountStore: ObservableObject {
     @Published private(set) var states: [AccountService: AccountState] = [:]
+    /// 읽어 온 한도를 추이 그래프용으로 기록한다
+    let history: UsageHistory
     private var fetchers = [AccountService: AccountFetcher]()
     private var timer: Timer?
     private var loginWindows = [AccountService: NSWindow]()
+
+    init(history: UsageHistory) { self.history = history }
 
     func start(interval: TimeInterval = 300) {
         refresh()
@@ -185,6 +189,7 @@ func parseLimits(_ text: String) -> [LimitGauge] {
             guard let self else { return }
             // 일시적인 실패로 이미 읽은 값을 지우지 않는다
             if case .failed = state, case .ok = self.state(service) {} else { self.states[service] = state }
+            if case .ok(let gauges, let date) = state { self.history.record(service, gauges: gauges, at: date) }
             dump?(text)
         }
     }

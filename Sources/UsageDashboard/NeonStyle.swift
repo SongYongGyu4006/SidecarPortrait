@@ -78,7 +78,16 @@ struct NeonDashboard: View {
                 panel(.claude, t.claude, t)
                 panel(.gemini, t.gemini, t)
             }
-            localStrip(t).frame(height: 190)
+            neonBox(t.grid.opacity(1), t) {
+                HistoryGrid(m: m, claude: t.claude, gemini: t.gemini,
+                            look: TrendLook(grid: t.grid, label: t.secondary, danger: t.danger,
+                                            font: { .system(size: $0, weight: $1, design: .rounded) }, lineWidth: 3, glow: t.glow / 2, fill: 0.2),
+                            serviceLabel: { s, c in
+                                AnyView(Text(s.title.uppercased()).font(.system(size: 15, weight: .black, design: .rounded)).italic()
+                                    .foregroundStyle(c).shadow(color: c.opacity(0.8), radius: t.glow / 3))
+                            })
+            }
+            .frame(height: 290)
         }
         .padding(36)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -123,7 +132,7 @@ struct NeonDashboard: View {
                 } else {
                     HStack(spacing: 20) {
                         ForEach(Array(state.gauges.enumerated()), id: \.element.id) { i, g in
-                            NeonRing(gauge: g, tag: gaugeTag(g.label, index: i), color: g.percent >= 80 ? t.danger : color, t: t,
+                            NeonRing(gauge: g, tag: gaugeTag(g.label, index: i), color: g.percent >= 80 ? t.danger : color, t: t, now: m.now,
                                      size: state.gauges.count > 2 ? 150 : 210)
                                 .frame(maxWidth: .infinity)
                         }
@@ -133,37 +142,6 @@ struct NeonDashboard: View {
             }
         }
     }
-
-    func localStrip(_ t: NeonTheme) -> some View {
-        neonBox(t.grid.opacity(1), t) {
-            HStack(spacing: 36) {
-                localBars("CLAUDE", m.localClaude, t.claude, t)
-                localBars("GEMINI", m.localGemini, t.gemini, t)
-            }
-        }
-    }
-
-    func localBars(_ name: String, _ s: ServiceSummary, _ color: Color, _ t: NeonTheme) -> some View {
-        let peak = max(1, s.hourly.map(\.tokens).max() ?? 1)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(name) · 이 MAC 24H").font(.system(size: 14, weight: .bold, design: .rounded)).tracking(2).foregroundStyle(t.secondary)
-                Spacer()
-                Text(compact(s.today.total)).font(.system(size: 26, weight: .heavy, design: .rounded)).monospacedDigit()
-                    .foregroundStyle(color).shadow(color: color.opacity(0.8), radius: t.glow / 2)
-                Text("TODAY").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(t.secondary)
-            }
-            HStack(alignment: .bottom, spacing: 5) {
-                ForEach(Array(s.hourly.enumerated()), id: \.offset) { _, item in
-                    Capsule().fill(item.tokens == 0 ? color.opacity(0.15) : color)
-                        .frame(height: item.tokens == 0 ? 4 : max(6, 80 * CGFloat(item.tokens) / CGFloat(peak)))
-                        .shadow(color: item.tokens == 0 ? .clear : color.opacity(0.8), radius: t.glow / 2)
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .bottom)
-        }
-        .frame(maxWidth: .infinity)
-    }
 }
 
 struct NeonRing: View {
@@ -171,6 +149,7 @@ struct NeonRing: View {
     let tag: String
     let color: Color
     let t: NeonTheme
+    let now: Date
     let size: CGFloat
 
     var body: some View {
@@ -193,7 +172,7 @@ struct NeonRing: View {
             .frame(width: size, height: size)
             VStack(spacing: 4) {
                 Text(gauge.label).font(.system(size: 16, weight: .bold, design: .rounded))
-                Text(gauge.reset ?? " ").font(.system(size: 13, design: .rounded)).foregroundStyle(t.secondary)
+                Text(resetLine(gauge, now: now)).font(.system(size: 13, design: .rounded)).foregroundStyle(t.secondary)
                     .multilineTextAlignment(.center).lineLimit(2)
             }
         }

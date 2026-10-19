@@ -44,12 +44,10 @@ struct MinimalDashboard: View {
                 column(.gemini, t.gemini, t)
             }
             .frame(maxHeight: .infinity)
-            Rectangle().fill(t.line).frame(height: 1).padding(.vertical, 28)
-            HStack(spacing: 48) {
-                local("Claude Code", m.localClaude, t.claude, t)
-                local("Gemini CLI", m.localGemini, t.gemini, t)
-            }
-            .frame(height: 110)
+            Rectangle().fill(t.line).frame(height: 1).padding(.vertical, 24)
+            HistoryGrid(m: m, claude: t.claude, gemini: t.gemini,
+                        look: TrendLook(grid: t.line, label: t.secondary, danger: t.danger, lineWidth: 1.8, fill: 0.08))
+                .frame(height: 250)
         }
         .padding(.horizontal, 56).padding(.vertical, 44)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -94,7 +92,7 @@ struct MinimalDashboard: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 6) {
                     Text(g.label).font(.system(size: 18, weight: .medium))
-                    Text(g.reset ?? "").font(.system(size: 14)).foregroundStyle(t.secondary)
+                    Text(resetLine(g, now: m.now)).font(.system(size: 14)).foregroundStyle(t.secondary)
                 }
             }
             GeometryReader { geo in
@@ -105,25 +103,5 @@ struct MinimalDashboard: View {
             }
             .frame(height: 3)
         }
-    }
-
-    func local(_ name: String, _ s: ServiceSummary, _ color: Color, _ t: MinimalTheme) -> some View {
-        let peak = max(1, s.hourly.map(\.tokens).max() ?? 1)
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("이 Mac의 \(name)").font(.system(size: 14, weight: .medium)).foregroundStyle(t.secondary)
-                Spacer()
-                Text("오늘 \(compact(s.today.total)) · 7일 \(compact(s.week.total))")
-                    .font(.system(size: 14)).foregroundStyle(t.secondary).monospacedDigit()
-            }
-            HStack(alignment: .bottom, spacing: 4) {
-                ForEach(Array(s.hourly.enumerated()), id: \.offset) { _, item in
-                    Rectangle().fill(item.tokens == 0 ? t.line : color)
-                        .frame(height: item.tokens == 0 ? 2 : max(3, 64 * CGFloat(item.tokens) / CGFloat(peak)))
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .bottom)
-        }
-        .frame(maxWidth: .infinity)
     }
 }

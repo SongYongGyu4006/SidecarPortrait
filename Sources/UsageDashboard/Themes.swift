@@ -57,14 +57,12 @@ final class DisplaySettings: ObservableObject {
 struct DashboardModel {
     let claude: AccountState
     let gemini: AccountState
-    let localClaude: ServiceSummary
-    let localGemini: ServiceSummary
+    let history: UsageHistory
     let now: Date
     /// 1초마다 바뀐다 (깜빡이는 커서·시계 콜론용)
     let blink: Bool
 
     func state(_ s: AccountService) -> AccountState { s == .claude ? claude : gemini }
-    func local(_ s: AccountService) -> ServiceSummary { s == .claude ? localClaude : localGemini }
 }
 
 extension AccountState {
@@ -95,19 +93,6 @@ extension AccountState {
     }
 }
 
-func compact(_ n: Int) -> String {
-    let v = Double(n)
-    switch v {
-    case 1e9...: return String(format: "%.2fB", v / 1e9)
-    case 1e6...: return String(format: "%.1fM", v / 1e6)
-    case 1e3...: return String(format: "%.1fK", v / 1e3)
-    default: return "\(n)"
-    }
-}
-
-/// 로케일과 상관없이 24시간제로 쓴다
-func hourText(_ date: Date) -> String { "\(Calendar.current.component(.hour, from: date))시" }
-
 func clockText(_ date: Date, colon: Bool = true) -> String {
     let c = Calendar.current.dateComponents([.hour, .minute], from: date)
     return String(format: colon ? "%02d:%02d" : "%02d %02d", c.hour ?? 0, c.minute ?? 0)
@@ -137,8 +122,8 @@ struct AppearanceScope<Content: View>: View {
 }
 
 struct DashboardView: View {
-    @ObservedObject var store: UsageStore
     @ObservedObject var accounts: AccountStore
+    @ObservedObject var history: UsageHistory
     @ObservedObject var settings: DisplaySettings
 
     var body: some View {
@@ -146,7 +131,7 @@ struct DashboardView: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let model = DashboardModel(
                     claude: accounts.state(.claude), gemini: accounts.state(.gemini),
-                    localClaude: store.snapshot.claude, localGemini: store.snapshot.gemini,
+                    history: history,
                     now: context.date, blink: Int(context.date.timeIntervalSince1970) % 2 == 0)
                 Group {
                     switch settings.style {

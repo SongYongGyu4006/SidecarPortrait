@@ -73,8 +73,8 @@ func sidecarScreen() -> NSScreen? {
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let options: Options
-    let store = UsageStore()
-    let accounts = AccountStore()
+    let history = UsageHistory()
+    lazy var accounts = AccountStore(history: history)
     let settings = DisplaySettings()
     var window: NSWindow?
     var statusItem: NSStatusItem?
@@ -90,7 +90,6 @@ func sidecarScreen() -> NSScreen? {
         if let path = options.snapshot { return saveSnapshot(to: path) }
         if let (service, path) = options.dump { return dumpAccount(service, to: path) }
         addStatusItem()
-        store.start()
         accounts.start()
         if options.windowMode {
             showWindowed()
@@ -104,7 +103,7 @@ func sidecarScreen() -> NSScreen? {
     func makeWindow(frame: NSRect, borderless: Bool) -> NSWindow {
         let w = NSWindow(contentRect: frame, styleMask: borderless ? [.borderless] : [.titled, .closable, .resizable, .miniaturizable],
                          backing: .buffered, defer: false)
-        w.contentView = NSHostingView(rootView: DashboardView(store: store, accounts: accounts, settings: settings))
+        w.contentView = NSHostingView(rootView: DashboardView(accounts: accounts, history: history, settings: settings))
         w.backgroundColor = .black
         w.isReleasedWhenClosed = false
         w.title = "AI 사용량"
@@ -158,10 +157,7 @@ func sidecarScreen() -> NSScreen? {
         }
     }
 
-    @objc func refreshNow() {
-        store.refresh()
-        accounts.refresh()
-    }
+    @objc func refreshNow() { accounts.refresh() }
 
     @objc func login(_ sender: NSMenuItem) {
         guard let service = sender.representedObject as? String, let s = AccountService(rawValue: service) else { return }
@@ -241,17 +237,16 @@ func sidecarScreen() -> NSScreen? {
 
     /// 화면 없이 확인할 수 있도록 iPad 크기로 그려 PNG로 저장한다
     func saveSnapshot(to path: String) {
-        store.refresh()
         accounts.refresh()
         waitForSnapshot(to: path, deadline: Date(timeIntervalSinceNow: 40))
     }
 
-    /// 로컬 기록과 계정 한도를 다 읽을 때까지(최대 40초) 기다렸다가 그린다
+    /// 계정 한도를 다 읽을 때까지(최대 40초) 기다렸다가 그린다
     func waitForSnapshot(to path: String, deadline: Date) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
             let accountsLoading = AccountService.allCases.contains { accounts.state($0) == .loading }
-            if store.loading || (accountsLoading && Date() < deadline) { return waitForSnapshot(to: path, deadline: deadline) }
-            let view = DashboardView(store: store, accounts: accounts, settings: settings).frame(width: canvas.width, height: canvas.height)
+            if accountsLoading && Date() < deadline { return waitForSnapshot(to: path, deadline: deadline) }
+            let view = DashboardView(accounts: accounts, history: history, settings: settings).frame(width: canvas.width, height: canvas.height)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             guard let image = renderer.cgImage,
