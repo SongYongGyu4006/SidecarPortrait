@@ -7,13 +7,20 @@
 //     --style retro|minimal|neon|gauge, --appearance system|light|dark  화면 스타일과 모드 (메뉴 막대에서도 고를 수 있다)
 //     --snapshot  1366×1024 화면을 PNG로 저장하고 끝낸다
 //     --dump-account claude|gemini|antigravity out.txt  사용량 페이지에서 읽은 글자를 저장하고 끝낸다 (파싱 확인용)
+//     --collect   화면 없이 한도를 한 번 읽어 기록하고 끝낸다 (백그라운드 수집기가 5분마다 이렇게 실행한다)
+//     --collector on|off|status  백그라운드 수집기를 켜고 끄거나 상태를 보고 끝낸다 (메뉴 막대에서도 할 수 있다)
 //   또는 Scripts/build-app.sh UsageDashboard로 만든 UsageDashboard.app을 실행 (메뉴 막대에서 종료)
 import AppKit
 import PrivateAPI
+import ServiceManagement
 import SwiftUI
 
 let runningAsApp = Bundle.main.bundlePath.hasSuffix(".app")
 let canvas = CGSize(width: 1366, height: 1024)
+
+/// 백그라운드 수집기. 앱 안의 Contents/Library/LaunchAgents에 든 plist로 등록되고,
+/// 시스템 설정 > 일반 > 로그인 항목에서도 끌 수 있다.
+let collector = SMAppService.agent(plistName: "io.github.songyonggyu4006.UsageDashboard.collector.plist")
 
 struct Options {
     var device: String?
@@ -22,6 +29,8 @@ struct Options {
     var dump: (AccountService, String)?
     var style: DashboardStyle?
     var appearance: Appearance?
+    var collect = false
+    var collectorCommand: String?
 
     init(_ args: [String]) {
         var it = args.dropFirst().makeIterator()
@@ -30,6 +39,10 @@ struct Options {
             case "--device": device = it.next()
             case "--window": windowMode = true
             case "--snapshot": snapshot = it.next()
+            case "--collect": collect = true
+            case "--collector":
+                guard let v = it.next(), ["on", "off", "status"].contains(v) else { usage() }
+                collectorCommand = v
             case "--style":
                 guard let v = it.next().flatMap(DashboardStyle.init(rawValue:)) else { usage() }
                 style = v
@@ -50,7 +63,7 @@ struct Options {
 
     func usage() -> Never {
         print("""
-        사용법: UsageDashboard [--device "iPad 이름"] [--window] [--snapshot out.png] [--dump-account claude|gemini|antigravity out.txt]
+        사용법: UsageDashboard [--device "iPad 이름"] [--window] [--collect] [--collector on|off|status] [--snapshot out.png] [--dump-account claude|gemini|antigravity out.txt]
                               [--style retro|minimal|neon|gauge] [--appearance system|light|dark]
         """)
         exit(1)
@@ -89,8 +102,14 @@ func sidecarScreen() -> NSScreen? {
         if let appearance = options.appearance { settings.appearance = appearance }
         if let path = options.snapshot { return saveSnapshot(to: path) }
         if let (service, path) = options.dump { return dumpAccount(service, to: path) }
+        if options.collect { return collectOnce() }
+        if let command = options.collectorCommand { return setCollector(command) }
         addStatusItem()
         accounts.start()
+        // 백그라운드 수집기가 쓴 기록도 그래프에 바로 반영한다
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.history.reload() }
+        }
         if options.windowMode {
             showWindowed()
         } else {
@@ -198,6 +217,8 @@ func sidecarScreen() -> NSScreen? {
             logout.target = self
             logout.representedObject = service.rawValue
         }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "백그라운드 수집 (앱이 꺼져 있어도 5분마다)", action: #selector(toggleCollector(_:)), keyEquivalent: "").target = self
         if !options.windowMode {
             menu.addItem(withTitle: "iPad에 다시 표시", action: #selector(reconnect), keyEquivalent: "").target = self
         }
@@ -232,8 +253,26 @@ func sidecarScreen() -> NSScreen? {
         if let v = sender.representedObject as? String, let a = Appearance(rawValue: v) { settings.appearance = a }
     }
 
+    @objc func toggleCollector(_ sender: NSMenuItem) {
+        guard runningAsApp else { return showAlert("백그라운드 수집은 UsageDashboard.app으로 실행했을 때만 켤 수 있어요.") }
+        do {
+            if collector.status == .enabled {
+                try collector.unregister()
+            } else {
+                try collector.register()
+                if collector.status == .requiresApproval {
+                    showAlert("시스템 설정 > 일반 > 로그인 항목에서 UsageDashboard의 백그라운드 실행을 허용해 주세요.")
+                    SMAppService.openSystemSettingsLoginItems()
+                }
+            }
+        } catch {
+            showAlert("백그라운드 수집을 바꾸지 못했어요: \(error.localizedDescription)")
+        }
+    }
+
     /// 메뉴를 열 때 지금 고른 스타일·모드에 체크 표시를 한다 (iPad 탭으로도 바뀌므로)
     func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.items.first { $0.action == #selector(toggleCollector(_:)) }?.state = collector.status == .enabled ? .on : .off
         for item in menu.items {
             for sub in item.submenu?.items ?? [] {
                 let v = sub.representedObject as? String
@@ -263,6 +302,32 @@ func sidecarScreen() -> NSScreen? {
             try? png.write(to: URL(fileURLWithPath: path))
             print("저장: \(path)")
             exit(0)
+        }
+    }
+
+    func setCollector(_ command: String) {
+        do {
+            if command == "on" { try collector.register() }
+            if command == "off" { try collector.unregister() }
+        } catch {
+            print("실패: \(error.localizedDescription)")
+        }
+        let names: [SMAppService.Status: String] = [.enabled: "켜짐", .notRegistered: "꺼짐",
+                                                    .requiresApproval: "승인 필요 (시스템 설정 > 일반 > 로그인 항목)", .notFound: "찾을 수 없음"]
+        print("백그라운드 수집: \(names[collector.status] ?? "알 수 없음")")
+        exit(0)
+    }
+
+    /// 백그라운드 수집: 모든 서비스를 한 번 읽어 기록하고(기록은 AccountStore가 한다) 끝낸다
+    func collectOnce() {
+        accounts.refresh()
+        let deadline = Date(timeIntervalSinceNow: 90)
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let loading = AccountService.allCases.contains { self.accounts.state($0) == .loading }
+                if !loading || Date() > deadline { exit(0) }
+            }
         }
     }
 

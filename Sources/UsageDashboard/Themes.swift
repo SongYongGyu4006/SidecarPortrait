@@ -117,7 +117,8 @@ func gaugeTag(_ label: String, index: Int) -> String {
     let l = label.lowercased()
     if l.contains("주") || l.contains("week") { return "WEEK" }
     if l.contains("세션") || l.contains("현재") || l.contains("5시간") || l.contains("session") || l.contains("current") || l.contains("five hour") { return "NOW" }
-    return "LIMIT \(index + 1)"
+    // 이름을 알아보지 못하면 사용량 페이지의 순서(현재 → 주간)를 따른다
+    return index == 0 ? "NOW" : index == 1 ? "WEEK" : "LIMIT \(index + 1)"
 }
 
 /// 고른 모드를 SwiftUI 색 구성으로 바꾼다. 시스템이면 원래 값을 그대로 쓴다.
