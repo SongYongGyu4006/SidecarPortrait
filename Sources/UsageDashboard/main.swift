@@ -326,10 +326,20 @@ func sidecarScreen() -> NSScreen? {
             Task { @MainActor in
                 guard let self else { return }
                 let loading = AccountService.allCases.contains { self.accounts.state($0) == .loading }
-                if !loading || Date() > deadline { exit(0) }
+                guard !loading || Date() > deadline else { return }
+                self.finishAfterClosingWebViews()
             }
         }
     }
+
+    /// 웹 뷰를 닫고 WebKit이 보조 프로세스를 정리할 시간을 준 뒤 끝낸다
+    func finishAfterClosingWebViews() {
+        guard !closing else { return }
+        closing = true
+        accounts.closeWebViews()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { exit(0) }
+    }
+    private var closing = false
 
     func dumpAccount(_ service: AccountService, to path: String) {
         accounts.refresh(service) { [self] text in

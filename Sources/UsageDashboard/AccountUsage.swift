@@ -160,6 +160,14 @@ func parseLimits(_ text: String) -> [LimitGauge] {
         }
     }
 
+    /// 웹 뷰를 닫아 WebKit 보조 프로세스(WebContent)도 함께 끝나게 한다
+    func close() {
+        completion = nil
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.loadHTMLString("", baseURL: nil)
+    }
+
     private func finish(_ state: AccountState, _ text: String) {
         let done = completion
         completion = nil
@@ -186,6 +194,12 @@ func parseLimits(_ text: String) -> [LimitGauge] {
     }
 
     func state(_ service: AccountService) -> AccountState { states[service] ?? .loading }
+
+    /// 수집기처럼 곧 끝나는 프로세스는 웹 뷰를 먼저 닫아야 WebContent 프로세스가 남지 않는다
+    func closeWebViews() {
+        fetchers.values.forEach { $0.close() }
+        fetchers.removeAll()
+    }
 
     func refresh() {
         for service in AccountService.allCases { refresh(service) }
