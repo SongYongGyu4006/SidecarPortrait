@@ -41,6 +41,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>같은 Wi‑Fi에 있는 작은 화면(SmallTV 등)에 사용량 이미지를 보내요.</string>
 </dict>
 </plist>
 PLIST

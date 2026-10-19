@@ -9,6 +9,8 @@
 //     --dump-account claude|gemini|antigravity out.txt  사용량 페이지에서 읽은 글자를 저장하고 끝낸다 (파싱 확인용)
 //     --collect   화면 없이 한도를 한 번 읽어 기록하고 끝낸다 (백그라운드 수집기가 5분마다 이렇게 실행한다)
 //     --collector on|off|status  백그라운드 수집기를 켜고 끄거나 상태를 보고 끝낸다 (메뉴 막대에서도 할 수 있다)
+//     --device-host <IP>|off     작은 Wi‑Fi 화면(SmallTV) 주소를 정하고 끝낸다 (메뉴 막대에서도 할 수 있다)
+//     --mini out.jpg             작은 화면용 240×240 이미지를 그려 저장하고 끝낸다
 //   또는 Scripts/build-app.sh UsageDashboard로 만든 UsageDashboard.app을 실행 (메뉴 막대에서 종료)
 import AppKit
 import PrivateAPI
@@ -31,6 +33,8 @@ struct Options {
     var appearance: Appearance?
     var collect = false
     var collectorCommand: String?
+    var deviceHost: String?
+    var mini: String?
 
     init(_ args: [String]) {
         var it = args.dropFirst().makeIterator()
@@ -40,6 +44,12 @@ struct Options {
             case "--window": windowMode = true
             case "--snapshot": snapshot = it.next()
             case "--collect": collect = true
+            case "--device-host":
+                guard let v = it.next() else { usage() }
+                deviceHost = v
+            case "--mini":
+                guard let v = it.next() else { usage() }
+                mini = v
             case "--collector":
                 guard let v = it.next(), ["on", "off", "status"].contains(v) else { usage() }
                 collectorCommand = v
@@ -63,7 +73,7 @@ struct Options {
 
     func usage() -> Never {
         print("""
-        사용법: UsageDashboard [--device "iPad 이름"] [--window] [--collect] [--collector on|off|status] [--snapshot out.png] [--dump-account claude|gemini|antigravity out.txt]
+        사용법: UsageDashboard [--device "iPad 이름"] [--window] [--collect] [--collector on|off|status] [--device-host IP|off] [--mini out.jpg] [--snapshot out.png] [--dump-account claude|gemini|antigravity out.txt]
                               [--style retro|minimal|neon|gauge] [--appearance system|light|dark]
         """)
         exit(1)
@@ -104,11 +114,20 @@ func sidecarScreen() -> NSScreen? {
         if let (service, path) = options.dump { return dumpAccount(service, to: path) }
         if options.collect { return collectOnce() }
         if let command = options.collectorCommand { return setCollector(command) }
+        if let host = options.deviceHost {
+            DevicePush.host = host == "off" ? nil : host
+            print("작은 화면 주소: \(DevicePush.host ?? "꺼짐")")
+            exit(0)
+        }
+        if let path = options.mini { return saveMini(to: path) }
         addStatusItem()
         accounts.start()
-        // 백그라운드 수집기가 쓴 기록도 그래프에 바로 반영한다
+        // 백그라운드 수집기가 쓴 기록도 그래프에 바로 반영하고, 값이 바뀌었으면 작은 화면에도 보낸다
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.history.reload() }
+            Task { @MainActor in
+                self?.history.reload()
+                self?.pushToDevice()
+            }
         }
         if options.windowMode {
             showWindowed()
@@ -219,6 +238,7 @@ func sidecarScreen() -> NSScreen? {
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "백그라운드 수집 (앱이 꺼져 있어도 5분마다)", action: #selector(toggleCollector(_:)), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "작은 Wi‑Fi 화면에도 보내기…", action: #selector(setDeviceHost(_:)), keyEquivalent: "").target = self
         if !options.windowMode {
             menu.addItem(withTitle: "iPad에 다시 표시", action: #selector(reconnect), keyEquivalent: "").target = self
         }
@@ -246,7 +266,10 @@ func sidecarScreen() -> NSScreen? {
     }
 
     @objc func pickSecond(_ sender: NSMenuItem) {
-        if let v = sender.representedObject as? String, let s = AccountService(rawValue: v) { settings.second = s }
+        if let v = sender.representedObject as? String, let s = AccountService(rawValue: v) {
+            settings.second = s
+            accounts.refresh(s)  // 새로 고른 칸을 바로 읽는다
+        }
     }
 
     @objc func pickAppearance(_ sender: NSMenuItem) {
@@ -270,9 +293,50 @@ func sidecarScreen() -> NSScreen? {
         }
     }
 
+    /// SmallTV 같은 240×240 Wi‑Fi 화면의 IP를 묻는다. 비우면 보내지 않는다.
+    @objc func setDeviceHost(_ sender: NSMenuItem) {
+        let alert = NSAlert()
+        alert.messageText = "작은 Wi‑Fi 화면에 보내기"
+        alert.informativeText = "GeekMagic SmallTV처럼 사진 앨범 기능이 있는 240×240 화면의 IP 주소를 적어 주세요. 사용량 숫자가 바뀔 때만 이미지를 올려요. 비우면 보내지 않아요."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = DevicePush.host ?? ""
+        field.placeholderString = "예: 192.168.0.50"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "저장")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let host = field.stringValue.trimmingCharacters(in: .whitespaces)
+        DevicePush.host = host.isEmpty ? nil : host
+        if !host.isEmpty { pushToDevice(force: true) }
+    }
+
+    func pushToDevice(force: Bool = false) {
+        guard DevicePush.host != nil, !accounts.isLoading else { return }
+        DevicePush.pushIfChanged(claude: accounts.state(.claude), second: settings.second,
+                                 secondState: accounts.state(settings.second), force: force) { print("작은 화면: \($0)") }
+    }
+
+    func saveMini(to path: String) {
+        accounts.refresh()
+        let deadline = Date(timeIntervalSinceNow: 60)
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self, !self.accounts.isLoading || Date() > deadline else { return }
+                timer.invalidate()
+                let view = MiniUsageView(claude: self.accounts.state(.claude), second: self.settings.second,
+                                         secondState: self.accounts.state(self.settings.second), now: Date())
+                if let jpeg = DevicePush.render(view) { try? jpeg.write(to: URL(fileURLWithPath: path)) }
+                print("저장: \(path)")
+                self.finishAfterClosingWebViews()
+            }
+        }
+    }
+
     /// 메뉴를 열 때 지금 고른 스타일·모드에 체크 표시를 한다 (iPad 탭으로도 바뀌므로)
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.items.first { $0.action == #selector(toggleCollector(_:)) }?.state = collector.status == .enabled ? .on : .off
+        menu.items.first { $0.action == #selector(setDeviceHost(_:)) }?.state = DevicePush.host != nil ? .on : .off
         for item in menu.items {
             for sub in item.submenu?.items ?? [] {
                 let v = sub.representedObject as? String
@@ -290,8 +354,7 @@ func sidecarScreen() -> NSScreen? {
     /// 계정 한도를 다 읽을 때까지(최대 40초) 기다렸다가 그린다
     func waitForSnapshot(to path: String, deadline: Date) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
-            let accountsLoading = AccountService.allCases.contains { accounts.state($0) == .loading }
-            if accountsLoading && Date() < deadline { return waitForSnapshot(to: path, deadline: deadline) }
+            if accounts.isLoading && Date() < deadline { return waitForSnapshot(to: path, deadline: deadline) }
             let view = DashboardView(accounts: accounts, history: history, settings: settings).frame(width: canvas.width, height: canvas.height)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
@@ -325,9 +388,15 @@ func sidecarScreen() -> NSScreen? {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                let loading = AccountService.allCases.contains { self.accounts.state($0) == .loading }
-                guard !loading || Date() > deadline else { return }
-                self.finishAfterClosingWebViews()
+                guard !self.accounts.isLoading || Date() > deadline else { return }
+                guard !self.pushing else { return }
+                self.pushing = true
+                // 작은 화면 주소가 있으면 바뀐 값을 보내고 끝낸다
+                guard DevicePush.host != nil else { return self.finishAfterClosingWebViews() }
+                DevicePush.pushIfChanged(claude: self.accounts.state(.claude), second: self.settings.second,
+                                         secondState: self.accounts.state(self.settings.second)) { _ in
+                    self.finishAfterClosingWebViews()
+                }
             }
         }
     }
@@ -340,6 +409,7 @@ func sidecarScreen() -> NSScreen? {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { exit(0) }
     }
     private var closing = false
+    private var pushing = false
 
     func dumpAccount(_ service: AccountService, to path: String) {
         accounts.refresh(service) { [self] text in
