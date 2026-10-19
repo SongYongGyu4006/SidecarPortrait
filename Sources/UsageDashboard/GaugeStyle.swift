@@ -52,7 +52,7 @@ struct GaugeDashboard: View {
             }
             HStack(spacing: 26) {
                 cluster(.claude, t.claude, t)
-                cluster(.gemini, t.gemini, t)
+                cluster(m.secondService, t.gemini, t)
             }
             HistoryGrid(m: m, claude: t.claude, gemini: t.gemini,
                         look: TrendLook(grid: t.tick.opacity(0.15), label: t.secondary, danger: t.redZone,

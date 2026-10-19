@@ -5,10 +5,19 @@ import AppKit
 import WebKit
 
 enum AccountService: String, CaseIterable, Identifiable {
-    case claude, gemini
+    case claude, gemini, antigravity
     var id: String { rawValue }
 
-    var title: String { self == .claude ? "Claude" : "Gemini" }
+    /// 사용량 페이지를 웹 뷰로 읽는 서비스 (Antigravity는 agy로 읽는다)
+    static let web: [AccountService] = [.claude, .gemini]
+
+    var title: String {
+        switch self {
+        case .claude: return "Claude"
+        case .gemini: return "Gemini"
+        case .antigravity: return "Antigravity"
+        }
+    }
 
     var loginURL: URL {
         URL(string: self == .claude ? "https://claude.ai/login" : "https://gemini.google.com/app")!
@@ -23,7 +32,8 @@ enum AccountService: String, CaseIterable, Identifiable {
     /// 서비스마다 따로 쓰는 웹 저장소. 값은 고정이어야 다시 실행해도 로그인이 유지된다.
     @MainActor var dataStore: WKWebsiteDataStore {
         if let store = Self.stores[self] { return store }
-        let id = UUID(uuidString: self == .claude ? "6E1C1A0D-6B1F-4C55-9C0B-2F3A7C1D0001" : "6E1C1A0D-6B1F-4C55-9C0B-2F3A7C1D0002")!
+        let id = UUID(uuidString: self == .claude ? "6E1C1A0D-6B1F-4C55-9C0B-2F3A7C1D0001"
+                                  : self == .gemini ? "6E1C1A0D-6B1F-4C55-9C0B-2F3A7C1D0002" : "6E1C1A0D-6B1F-4C55-9C0B-2F3A7C1D0003")!
         let store = WKWebsiteDataStore(forIdentifier: id)
         Self.stores[self] = store
         return store
@@ -182,16 +192,18 @@ func parseLimits(_ text: String) -> [LimitGauge] {
     }
 
     func refresh(_ service: AccountService, dump: ((String) -> Void)? = nil) {
-        let fetcher = fetchers[service] ?? AccountFetcher(service: service)
-        fetchers[service] = fetcher
         if case .ok = state(service) {} else { states[service] = .loading }
-        fetcher.fetch { [weak self] state, text in
+        let handle: (AccountState, String) -> Void = { [weak self] state, text in
             guard let self else { return }
             // 일시적인 실패로 이미 읽은 값을 지우지 않는다
             if case .failed = state, case .ok = self.state(service) {} else { self.states[service] = state }
             if case .ok(let gauges, let date) = state { self.history.record(service, gauges: gauges, at: date) }
             dump?(text)
         }
+        if service == .antigravity { return fetchAntigravity(handle) }
+        let fetcher = fetchers[service] ?? AccountFetcher(service: service)
+        fetchers[service] = fetcher
+        fetcher.fetch(handle)
     }
 
     /// 사용자가 직접 로그인하는 창. 닫으면 사용량을 다시 읽는다.

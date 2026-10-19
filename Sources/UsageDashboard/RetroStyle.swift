@@ -11,7 +11,7 @@ struct RetroDashboard: View {
             header(t)
             HStack(spacing: 22) {
                 RetroAccountPanel(service: .claude, color: t.claude, t: t, m: m)
-                RetroAccountPanel(service: .gemini, color: t.gemini, t: t, m: m)
+                RetroAccountPanel(service: m.secondService, color: t.gemini, t: t, m: m)
             }
             RetroHistoryPanel(t: t, m: m).frame(height: 310)
         }

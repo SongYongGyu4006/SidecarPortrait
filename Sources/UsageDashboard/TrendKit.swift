@@ -207,7 +207,7 @@ struct HistoryGrid: View {
         HStack(spacing: 28) {
             block(.claude, claude)
             Rectangle().fill(look.grid).frame(width: 1)
-            block(.gemini, gemini)
+            block(m.secondService, gemini)
         }
     }
 
