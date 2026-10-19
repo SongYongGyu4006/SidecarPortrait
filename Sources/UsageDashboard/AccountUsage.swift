@@ -180,6 +180,8 @@ func parseLimits(_ text: String) -> [LimitGauge] {
     @Published private(set) var states: [AccountService: AccountState] = [:]
     /// 읽어 온 한도를 추이 그래프용으로 기록한다
     let history: UsageHistory
+    /// 지금 읽는 중인 웹 뷰. 다 읽으면 닫아서 WebContent 프로세스와 메모리를 돌려준다.
+    /// (같은 웹 뷰에 claude.ai를 계속 다시 불러오면 메모리가 1GB 가까이 불어난다)
     private var fetchers = [AccountService: AccountFetcher]()
     private var timer: Timer?
     private var loginWindows = [AccountService: NSWindow]()
@@ -201,8 +203,18 @@ func parseLimits(_ text: String) -> [LimitGauge] {
         fetchers.removeAll()
     }
 
+    /// 읽을 서비스: Claude와, 오른쪽 칸에 고른 서비스(기본 Antigravity). 보지 않는 Gemini 페이지는 읽지 않는다.
+    /// 백그라운드 수집기도 같은 설정(UserDefaults)을 쓴다.
+    var activeServices: [AccountService] {
+        let second = UserDefaults.standard.string(forKey: "second").flatMap(AccountService.init(rawValue:))
+        return [.claude, second == .gemini ? .gemini : .antigravity]
+    }
+
+    /// 읽는 중인 서비스가 있는지 (스냅숏·수집기가 기다릴 때 쓴다)
+    var isLoading: Bool { activeServices.contains { state($0) == .loading } }
+
     func refresh() {
-        for service in AccountService.allCases { refresh(service) }
+        for service in activeServices { refresh(service) }
     }
 
     func refresh(_ service: AccountService, dump: ((String) -> Void)? = nil) {
@@ -215,9 +227,14 @@ func parseLimits(_ text: String) -> [LimitGauge] {
             dump?(text)
         }
         if service == .antigravity { return fetchAntigravity(handle) }
-        let fetcher = fetchers[service] ?? AccountFetcher(service: service)
+        guard fetchers[service] == nil else { return }  // 아직 읽는 중이면 겹쳐 열지 않는다
+        let fetcher = AccountFetcher(service: service)
         fetchers[service] = fetcher
-        fetcher.fetch(handle)
+        fetcher.fetch { [weak self] state, text in
+            fetcher.close()
+            self?.fetchers[service] = nil
+            handle(state, text)
+        }
     }
 
     /// 사용자가 직접 로그인하는 창. 닫으면 사용량을 다시 읽는다.
