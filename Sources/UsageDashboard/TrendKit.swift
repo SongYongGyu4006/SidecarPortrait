@@ -47,16 +47,23 @@ struct TrendChart: View {
                     Text(points.isEmpty ? "기록 수집 중 · 5분마다 저장돼요" : "기록 수집 중")
                         .font(look.font(13, .medium)).foregroundStyle(look.label)
                         .padding(.trailing, 34).padding(.bottom, 18)
+                        .offset(y: -18)  // 50% 눈금선과 겹치지 않게 조금 위로
                 }
             }
     }
 
     func draw(_ ctx: GraphicsContext, size: CGSize, points: [HistorySample]) {
-        let right: CGFloat = 34, bottom: CGFloat = 18
+        // 위쪽은 "100" 눈금 글자와 100% 선이 잘리지 않을 만큼 비운다
+        let right: CGFloat = 34, bottom: CGFloat = 18, top: CGFloat = 9
         let w = size.width - right, h = size.height - bottom
         let start = now.addingTimeInterval(-span.seconds)
         func x(_ t: Date) -> CGFloat { CGFloat(t.timeIntervalSince(start) / span.seconds) * w }
-        func y(_ v: Int) -> CGFloat { h - CGFloat(min(100, max(0, v))) / 100 * h }
+        func y(_ v: Int) -> CGFloat { h - CGFloat(min(100, max(0, v))) / 100 * (h - top) }
+        // 가장자리 글자가 잘리지 않게 안쪽으로 붙인다
+        func axisLabel(_ text: String, at px: CGFloat) {
+            ctx.draw(Text(text).font(look.font(11, .regular)).foregroundColor(look.label),
+                     at: CGPoint(x: min(max(px, 14), w - 14), y: h + 4), anchor: .top)
+        }
 
         // 눈금: 0·50·100% 가로선, 80% 경고선, 시간 눈금
         for v in [0, 50, 100] {
@@ -76,10 +83,7 @@ struct TrendChart: View {
             var t = cal.dateInterval(of: .hour, for: start)!.end
             while t < now {
                 let hour = cal.component(.hour, from: t)
-                if hour % 6 == 0 {
-                    ctx.draw(Text("\(hour)시").font(look.font(11, .regular)).foregroundColor(look.label),
-                             at: CGPoint(x: x(t), y: h + 4), anchor: .top)
-                }
+                if hour % 6 == 0 { axisLabel("\(hour)시", at: x(t)) }
                 t = t.addingTimeInterval(3600)
             }
         } else {
@@ -89,9 +93,10 @@ struct TrendChart: View {
                 tick.move(to: CGPoint(x: x(t), y: h))
                 tick.addLine(to: CGPoint(x: x(t), y: h + 3))
                 ctx.stroke(tick, with: .color(look.grid), lineWidth: 1)
-                // 요일은 그날 한가운데에 쓴다
-                ctx.draw(Text(t.formatted(.dateTime.weekday(.narrow))).font(look.font(11, .regular)).foregroundColor(look.label),
-                         at: CGPoint(x: min(w - 6, x(t.addingTimeInterval(43200))), y: h + 4), anchor: .top)
+                // 요일은 그날 한가운데에 쓴다. 맨 오른쪽 오늘은 지금까지의 가운데에 "오늘"로 쓴다.
+                let today = cal.isDate(t, inSameDayAs: now)
+                axisLabel(today ? "오늘" : t.formatted(.dateTime.weekday(.narrow)),
+                          at: today ? (x(t) + x(now)) / 2 : x(t.addingTimeInterval(43200)))
                 t = t.addingTimeInterval(86400)
             }
         }
@@ -116,7 +121,10 @@ struct TrendChart: View {
             marker.move(to: CGPoint(x: x(t), y: 0))
             marker.addLine(to: CGPoint(x: x(t), y: h))
             ctx.stroke(marker, with: .color(color.opacity(0.55)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
-            ctx.draw(Text("↺").font(look.font(12, .bold)).foregroundColor(color), at: CGPoint(x: x(t) + 3, y: 2), anchor: .topLeading)
+            // 오른쪽 끝이면 눈금 글자와 겹치지 않게 선 왼쪽에 쓴다
+            let nearEdge = x(t) > w - 16
+            ctx.draw(Text("↺").font(look.font(12, .bold)).foregroundColor(color),
+                     at: CGPoint(x: x(t) + (nearEdge ? -3 : 3), y: 2), anchor: nearEdge ? .topTrailing : .topLeading)
         }
 
         let last = points.last!
