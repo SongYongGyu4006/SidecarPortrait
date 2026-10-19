@@ -96,8 +96,9 @@ Scripts/build-app.sh UsageDashboard --install   # ~/Applications/UsageDashboard.
   ```
 
   오른쪽 칸은 메뉴 막대 아이콘의 **오른쪽 칸**에서 Antigravity(기본)와 Gemini 앱(채팅) 중에 고를 수 있어요.
+- **백그라운드 수집**: 메뉴 막대 아이콘의 **백그라운드 수집**을 켜면 대시보드가 꺼져 있어도 5분마다 한도를 읽어 기록해서 그래프가 끊기지 않아요. 앱 안의 LaunchAgent를 `SMAppService`로 등록하는 방식이라 시스템 설정 > 일반 > **로그인 항목**에 보이고, 거기서도 끌 수 있어요. 명령으로는 `~/Applications/UsageDashboard.app/Contents/MacOS/UsageDashboard --collector on|off|status`예요. Mac이 잠자기 중인 동안은 기록되지 않아요.
 - **화면 스타일**: 레트로 픽셀, 미니멀, 네온 사이버펑크, 자동차 계기판 4가지에 각각 라이트·다크 모드가 있어요. 메뉴 막대 아이콘의 **화면 스타일**, **화면 모드**에서 고르거나 iPad 화면을 탭하면 다음 스타일로 바뀌어요. 고른 값은 다음 실행에도 유지돼요.
-- **사용률 추이**: 읽어 온 세션·주간 %를 시각과 함께 `~/Library/Application Support/UsageDashboard/history.json`에 기록해서(8일 보관) 아래쪽에 현재(24시간)·주간(7일) 그래프로 그려요. 값이 계정 기준이라 다른 기기 사용분도 반영돼요. 값이 크게 떨어지면 초기화로 보고 ↺로 표시하고, 대시보드가 20분 넘게 꺼져 있던 구간은 비워 둬요. 각 한도에는 초기화까지 남은 시간도 함께 보여요.
+- **사용률 추이**: 읽어 온 세션·주간 %를 시각과 함께 `~/Library/Application Support/UsageDashboard/history.json`에 기록해서(8일 보관) 아래쪽에 현재(24시간)·주간(7일) 그래프로 그려요. 값이 계정 기준이라 다른 기기 사용분도 반영돼요. 값이 크게 떨어지면 초기화로 보고 ↺로 표시하고, 20분 넘게 기록이 없던 구간(대시보드와 백그라운드 수집이 모두 꺼져 있었거나 Mac이 잠자기 중이던 때)은 비워 둬요. 각 한도에는 초기화까지 남은 시간도 함께 보여요.
 - Sidecar가 연결돼 있지 않으면 첫 번째 iPad를 연결하고, 종료할 때 연결을 끊어요. 기기는 `--device "iPad 이름"`으로 고를 수 있어요. SidecarPortrait와 같은 Sidecar 화면을 쓰므로 둘을 함께 실행하지 마세요.
 - 확인용 옵션: `--window`(지금 화면에 창으로), `--snapshot dash.png`(1366×1024 PNG 저장, `--style retro|minimal|neon|gauge`·`--appearance light|dark`와 함께 쓰면 그 화면으로 저장), `--dump-account claude|gemini|antigravity out.txt`(사용량 페이지에서 읽은 글자 저장, 계정 정보가 들어 있을 수 있으니 공유하지 마세요). 로그인 정보가 앱 번들 ID에 묶여 있어서 `--dump-account`는 `build/UsageDashboard.app/Contents/MacOS/UsageDashboard`로 실행하세요.
 

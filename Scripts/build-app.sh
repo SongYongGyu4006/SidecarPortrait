@@ -45,6 +45,27 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# 대시보드의 백그라운드 수집기: 메뉴에서 켜면 SMAppService가 이 plist로 5분마다 --collect를 실행한다
+if [ "$NAME" = "UsageDashboard" ]; then
+    mkdir -p "$APP/Contents/Library/LaunchAgents"
+    cat > "$APP/Contents/Library/LaunchAgents/$BUNDLE_ID.collector.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$BUNDLE_ID.collector</string>
+    <key>BundleProgram</key><string>Contents/MacOS/$NAME</string>
+    <key>ProgramArguments</key>
+    <array><string>Contents/MacOS/$NAME</string><string>--collect</string></array>
+    <key>AssociatedBundleIdentifiers</key><string>$BUNDLE_ID</string>
+    <key>StartInterval</key><integer>300</integer>
+    <key>RunAtLoad</key><true/>
+    <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>
+PLIST
+fi
+
 IDENTITY=${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
     | grep -E '"(Apple Development|Developer ID Application):' | head -1 | awk '{print $2}')}
 if [ -z "$IDENTITY" ]; then

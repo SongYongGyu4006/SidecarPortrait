@@ -1,5 +1,6 @@
 // 계정 사용률 기록: 사용량 페이지를 읽을 때마다 한도별 %와 시각만 저장해 추이 그래프로 그린다.
-// 값이 계정 기준이라 다른 기기에서 쓴 양도 반영된다. 대시보드가 꺼져 있던 동안은 기록이 비어 있다.
+// 값이 계정 기준이라 다른 기기에서 쓴 양도 반영된다. 대시보드와 백그라운드 수집기(--collect)가
+// 같은 파일에 쓰므로, 쓸 때마다 파일 잠금 안에서 디스크 내용을 다시 읽어 합친다.
 import Foundation
 
 struct HistorySample: Codable, Equatable {
@@ -15,7 +16,9 @@ struct HistoryKey: Hashable {
 }
 
 final class UsageHistory: ObservableObject {
-    @Published private(set) var series: [String: [HistorySample]] = [:]
+    typealias Series = [String: [HistorySample]]
+
+    @Published private(set) var series: Series = [:]
     /// 이보다 오래된 기록은 버린다 (7일 그래프 + 여유)
     private let keep: TimeInterval = 8 * 24 * 3600
     private let url: URL
@@ -30,34 +33,51 @@ final class UsageHistory: ObservableObject {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             url = dir.appendingPathComponent("history.json")
         }
-        if let data = try? Data(contentsOf: url),
-           let saved = try? JSONDecoder.history.decode([String: [HistorySample]].self, from: data) {
-            series = saved
-        }
+        series = load() ?? [:]
     }
 
     func samples(_ key: HistoryKey) -> [HistorySample] { series[key.id] ?? [] }
 
-    func record(_ service: AccountService, gauges: [LimitGauge], at date: Date) {
-        var changed = false
-        var seen = Set<String>()
-        for (i, g) in gauges.enumerated() {
-            let id = HistoryKey(service: service, tag: gaugeTag(g.label, index: i)).id
-            // 같은 종류 한도가 여럿이면(예: 모델별 주간 한도) 첫 번째만 그래프에 기록한다
-            guard seen.insert(id).inserted else { continue }
-            var list = series[id] ?? []
-            // 같은 값을 짧은 간격으로 또 읽었으면 건너뛴다
-            if let last = list.last, last.v == g.percent, date.timeIntervalSince(last.t) < 4 * 60 { continue }
-            list.append(HistorySample(t: date, v: g.percent))
-            series[id] = list.filter { date.timeIntervalSince($0.t) < keep }
-            changed = true
-        }
-        if changed { save() }
+    /// 다른 프로세스(수집기)가 쓴 기록을 화면에 반영한다
+    func reload() {
+        if let disk = load(), disk != series { series = disk }
     }
 
-    private func save() {
-        guard let data = try? JSONEncoder.history.encode(series) else { return }
-        try? data.write(to: url, options: .atomic)
+    func record(_ service: AccountService, gauges: [LimitGauge], at date: Date) {
+        withFileLock {
+            var all = load() ?? series
+            var changed = false
+            var seen = Set<String>()
+            for (i, g) in gauges.enumerated() {
+                let id = HistoryKey(service: service, tag: gaugeTag(g.label, index: i)).id
+                // 같은 종류 한도가 여럿이면(예: 모델별 주간 한도) 첫 번째만 그래프에 기록한다
+                guard seen.insert(id).inserted else { continue }
+                var list = all[id] ?? []
+                // 대시보드와 수집기가 같은 값을 짧은 간격으로 또 읽었으면 건너뛴다
+                if list.contains(where: { $0.v == g.percent && abs(date.timeIntervalSince($0.t)) < 4 * 60 }) { continue }
+                list.append(HistorySample(t: date, v: g.percent))
+                all[id] = list.filter { date.timeIntervalSince($0.t) < keep }.sorted { $0.t < $1.t }
+                changed = true
+            }
+            if changed, let data = try? JSONEncoder.history.encode(all) {
+                try? data.write(to: url, options: .atomic)
+            }
+            if all != series { series = all }
+        }
+    }
+
+    private func load() -> Series? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder.history.decode(Series.self, from: data)
+    }
+
+    /// 두 프로세스가 동시에 읽고 쓰지 않도록 옆에 둔 잠금 파일로 순서를 맞춘다
+    private func withFileLock(_ body: () -> Void) {
+        let fd = open(url.path + ".lock", O_CREAT | O_RDWR, 0o644)
+        guard fd >= 0 else { return body() }
+        flock(fd, LOCK_EX)
+        defer { flock(fd, LOCK_UN); close(fd) }
+        body()
     }
 }
 
