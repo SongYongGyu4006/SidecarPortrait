@@ -54,11 +54,19 @@ struct GaugeDashboard: View {
                 cluster(.claude, t.claude, t)
                 cluster(.gemini, t.gemini, t)
             }
-            HStack(spacing: 26) {
-                odometer("CLAUDE CODE", m.localClaude, t.claude, t)
-                odometer("GEMINI CLI", m.localGemini, t.gemini, t)
-            }
-            .frame(height: 150)
+            HistoryGrid(m: m, claude: t.claude, gemini: t.gemini,
+                        look: TrendLook(grid: t.tick.opacity(0.15), label: t.secondary, danger: t.redZone,
+                                        font: { .system(size: $0, weight: $1, design: .monospaced) }, lineWidth: 2.5, fill: 0.15),
+                        serviceLabel: { s, c in
+                            AnyView(HStack(spacing: 8) {
+                                Capsule().fill(c).frame(width: 18, height: 4)
+                                Text(s.title.uppercased()).font(.system(size: 13, weight: .heavy)).italic().tracking(2)
+                            })
+                        })
+                .padding(20)
+                .background(RoundedRectangle(cornerRadius: 20).fill(t.face.opacity(0.7)))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(LinearGradient(colors: t.bezel, startPoint: .top, endPoint: .bottom), lineWidth: 2))
+                .frame(height: 290)
         }
         .padding(36)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -97,7 +105,7 @@ struct GaugeDashboard: View {
             } else {
                 HStack(spacing: 22) {
                     ForEach(Array(state.gauges.enumerated()), id: \.element.id) { i, g in
-                        DialGauge(gauge: g, tag: gaugeTag(g.label, index: i), color: color, t: t)
+                        DialGauge(gauge: g, tag: gaugeTag(g.label, index: i), color: color, t: t, now: m.now)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -108,36 +116,6 @@ struct GaugeDashboard: View {
         .background(RoundedRectangle(cornerRadius: 28).fill(t.face.opacity(0.35)))
         .overlay(RoundedRectangle(cornerRadius: 28).stroke(LinearGradient(colors: t.bezel, startPoint: .top, endPoint: .bottom).opacity(0.6), lineWidth: 2))
     }
-
-    /// 주행 거리계처럼 칸마다 숫자 한 자
-    func odometer(_ name: String, _ s: ServiceSummary, _ color: Color, _ t: GaugeTheme) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(name).font(.system(size: 14, weight: .heavy)).tracking(2)
-                Text("이 Mac 토큰").font(.system(size: 13)).foregroundStyle(t.secondary)
-                Spacer()
-                Text("7일 \(compact(s.week.total))").font(.system(size: 14, weight: .semibold, design: .monospaced)).foregroundStyle(t.secondary)
-            }
-            HStack(spacing: 6) {
-                Text("TODAY").font(.system(size: 13, weight: .heavy)).foregroundStyle(color).frame(width: 70, alignment: .leading)
-                ForEach(Array(compact(s.today.total).leftPad(to: 7).enumerated()), id: \.offset) { _, ch in
-                    Text(String(ch)).font(.system(size: 40, weight: .bold, design: .monospaced))
-                        .foregroundStyle(ch == " " ? .clear : t.lcdText)
-                        .frame(width: 46, height: 62)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(t.lcd))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(t.bezel.last!.opacity(0.6), lineWidth: 1.5))
-                }
-                Spacer()
-            }
-        }
-        .padding(20)
-        .background(RoundedRectangle(cornerRadius: 20).fill(t.face.opacity(0.7)))
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(LinearGradient(colors: t.bezel, startPoint: .top, endPoint: .bottom), lineWidth: 2))
-    }
-}
-
-private extension String {
-    func leftPad(to n: Int) -> String { count >= n ? self : String(repeating: " ", count: n - count) + self }
 }
 
 /// 240도로 열린 원형 계기. 80% 위는 빨간 구간.
@@ -146,6 +124,7 @@ struct DialGauge: View {
     let tag: String
     let color: Color
     let t: GaugeTheme
+    let now: Date
 
     var body: some View {
         VStack(spacing: 14) {
@@ -154,7 +133,7 @@ struct DialGauge: View {
                 .background(Circle().fill(t.face))
                 .overlay(Circle().stroke(LinearGradient(colors: t.bezel, startPoint: .top, endPoint: .bottom), lineWidth: 9))
                 .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
-            Text(gauge.reset ?? " ").font(.system(size: 13, weight: .medium)).foregroundStyle(t.secondary)
+            Text(resetLine(gauge, now: now)).font(.system(size: 13, weight: .medium)).foregroundStyle(t.secondary)
                 .multilineTextAlignment(.center).lineLimit(2)
         }
     }

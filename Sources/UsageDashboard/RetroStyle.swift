@@ -13,7 +13,7 @@ struct RetroDashboard: View {
                 RetroAccountPanel(service: .claude, color: t.claude, t: t, m: m)
                 RetroAccountPanel(service: .gemini, color: t.gemini, t: t, m: m)
             }
-            RetroLocalPanel(t: t, m: m).frame(height: 220)
+            RetroHistoryPanel(t: t, m: m).frame(height: 310)
         }
         .padding(34)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -30,7 +30,7 @@ struct RetroDashboard: View {
                         .opacity(m.blink ? 1 : 0)
                         .shadow(color: t.glow ? t.phosphor.opacity(0.7) : .clear, radius: 8)
                 }
-                Text("> 한도: 계정 기준(모든 기기 합산)   > 토큰: 이 Mac 기록")
+                Text("> 계정 기준 · 모든 기기 합산")
                     .font(monoFont(15)).foregroundStyle(t.dim)
             }
             Spacer()
@@ -72,7 +72,7 @@ struct RetroAccountPanel: View {
                     let gauges = state.gauges
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(gauges.enumerated()), id: \.element.id) { i, g in
-                            RetroGaugeRow(gauge: g, tag: gaugeTag(g.label, index: i), color: color, t: t, large: gauges.count <= 2)
+                            RetroGaugeRow(gauge: g, tag: gaugeTag(g.label, index: i), color: color, t: t, large: gauges.count <= 2, now: m.now)
                                 .frame(maxHeight: .infinity)
                         }
                     }
@@ -89,6 +89,7 @@ struct RetroGaugeRow: View {
     let color: Color
     let t: RetroTheme
     let large: Bool
+    let now: Date
 
     var body: some View {
         let tint = gauge.percent >= 80 ? t.danger : color
@@ -103,64 +104,28 @@ struct RetroGaugeRow: View {
             }
             SegmentBar(fraction: Double(gauge.percent) / 100, cells: 25, color: tint, glow: t.glow)
                 .frame(height: large ? 40 : 28)
-            Text("> " + (gauge.reset ?? "초기화 시각 정보 없음"))
+            Text("> " + resetLine(gauge, now: now))
                 .font(monoFont(15)).foregroundStyle(t.dim)
         }
     }
 }
 
-/// 이 Mac의 최근 24시간 토큰을 칸 히트맵으로, 오늘·7일 합계를 숫자로
-struct RetroLocalPanel: View {
+/// 계정 사용률 추이: 서비스마다 현재(24시간)·주간(7일)
+struct RetroHistoryPanel: View {
     let t: RetroTheme
     let m: DashboardModel
 
     var body: some View {
         RetroPanel(t: t, color: t.phosphor) {
             HStack(alignment: .center) {
-                PixelText("LOCAL TOKENS", px: 4, color: t.phosphor, glow: t.glow)
-                Text("  이 Mac 기록 · 최근 24시간").font(monoFont(14)).foregroundStyle(t.dim)
-                Spacer()
-                HStack(spacing: 0) {
-                    Text("TODAY").frame(width: 150, alignment: .trailing)
-                    Text("7 DAYS").frame(width: 150, alignment: .trailing)
-                }
-                .font(monoFont(14, .semibold)).foregroundStyle(t.dim)
+                PixelText("HISTORY", px: 4, color: t.phosphor, glow: t.glow)
+                Text("  계정 사용률 추이 · ↺ 초기화").font(monoFont(14)).foregroundStyle(t.dim)
             }
-            .padding(.bottom, 22)
-            VStack(spacing: 16) {
-                row("CLAUDE", m.localClaude, t.claude)
-                row("GEMINI", m.localGemini, t.gemini)
-                HStack(spacing: 0) {
-                    Color.clear.frame(width: 130)
-                    ForEach(Array(m.localClaude.hourly.enumerated()), id: \.offset) { i, item in
-                        Text(i % 6 == 0 ? hourText(item.hour) : "")
-                            .font(monoFont(12)).foregroundStyle(t.dim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    Color.clear.frame(width: 300)
-                }
-            }
-        }
-    }
-
-    func row(_ name: String, _ s: ServiceSummary, _ color: Color) -> some View {
-        let peak = max(1, s.hourly.map(\.tokens).max() ?? 1)
-        return HStack(spacing: 0) {
-            PixelText(name, px: 3.5, color: color, glow: false).frame(width: 130, alignment: .leading)
-            HStack(spacing: 5) {
-                ForEach(Array(s.hourly.enumerated()), id: \.offset) { _, item in
-                    let level = item.tokens == 0 ? 0 : max(0.25, Double(item.tokens) / Double(peak))
-                    Rectangle()
-                        .fill(level == 0 ? color.opacity(0.08) : color.opacity(level))
-                        .shadow(color: t.glow && level > 0.6 ? color.opacity(0.5) : .clear, radius: 4)
-                }
-            }
-            .frame(height: 34)
-            HStack(spacing: 0) {
-                PixelText(compact(s.today.total), px: 4, color: color, glow: t.glow).frame(width: 150, alignment: .trailing)
-                PixelText(compact(s.week.total), px: 4, color: color.opacity(0.6), glow: false).frame(width: 150, alignment: .trailing)
-            }
-            .frame(width: 300)
+            .padding(.bottom, 14)
+            HistoryGrid(m: m, claude: t.claude, gemini: t.gemini,
+                        look: TrendLook(grid: t.phosphor.opacity(0.18), label: t.dim, danger: t.danger,
+                                        font: { monoFont($0, $1) }, lineWidth: 3, glow: t.glow ? 4 : 0, fill: 0.18, square: true),
+                        serviceLabel: { s, c in AnyView(PixelText(s.title, px: 2.5, color: c, glow: false)) })
         }
     }
 }
