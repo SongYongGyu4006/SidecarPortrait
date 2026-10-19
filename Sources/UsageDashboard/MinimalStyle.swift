@@ -41,7 +41,7 @@ struct MinimalDashboard: View {
             HStack(alignment: .top, spacing: 0) {
                 column(.claude, t.claude, t)
                 Rectangle().fill(t.line).frame(width: 1).padding(.horizontal, 48)
-                column(.gemini, t.gemini, t)
+                column(m.secondService, t.gemini, t)
             }
             .frame(maxHeight: .infinity)
             Rectangle().fill(t.line).frame(height: 1).padding(.vertical, 24)

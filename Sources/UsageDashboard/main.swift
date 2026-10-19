@@ -1,12 +1,12 @@
 // UsageDashboard
-// 가로로 연결한 iPad Sidecar 화면을 Claude·Gemini 사용량 대시보드로 꽉 채운다.
+// 가로로 연결한 iPad Sidecar 화면을 Claude·Antigravity(또는 Gemini) 사용량 대시보드로 꽉 채운다.
 // Sidecar가 연결돼 있지 않으면 첫 번째 iPad를 가로로 연결하고, 종료할 때 그 연결을 끊는다.
 //
 //   swift run UsageDashboard [--device "<iPad 이름>"] [--window] [--snapshot out.png] [--style …] [--appearance …]
 //     --window    Sidecar 대신 지금 화면에 일반 창으로 띄운다
 //     --style retro|minimal|neon|gauge, --appearance system|light|dark  화면 스타일과 모드 (메뉴 막대에서도 고를 수 있다)
 //     --snapshot  1366×1024 화면을 PNG로 저장하고 끝낸다
-//     --dump-account claude|gemini out.txt  사용량 페이지에서 읽은 글자를 저장하고 끝낸다 (파싱 확인용)
+//     --dump-account claude|gemini|antigravity out.txt  사용량 페이지에서 읽은 글자를 저장하고 끝낸다 (파싱 확인용)
 //   또는 Scripts/build-app.sh UsageDashboard로 만든 UsageDashboard.app을 실행 (메뉴 막대에서 종료)
 import AppKit
 import PrivateAPI
@@ -38,7 +38,7 @@ struct Options {
                 appearance = v
             case "--dump-account":
                 guard let s = it.next().flatMap(AccountService.init(rawValue:)), let path = it.next() else {
-                    print("사용법: --dump-account claude|gemini out.txt"); exit(1)
+                    print("사용법: --dump-account claude|gemini|antigravity out.txt"); exit(1)
                 }
                 dump = (s, path)
             default:
@@ -50,7 +50,7 @@ struct Options {
 
     func usage() -> Never {
         print("""
-        사용법: UsageDashboard [--device "iPad 이름"] [--window] [--snapshot out.png] [--dump-account claude|gemini out.txt]
+        사용법: UsageDashboard [--device "iPad 이름"] [--window] [--snapshot out.png] [--dump-account claude|gemini|antigravity out.txt]
                               [--style retro|minimal|neon|gauge] [--appearance system|light|dark]
         """)
         exit(1)
@@ -185,12 +185,15 @@ func sidecarScreen() -> NSScreen? {
         menu.addItem(choiceMenu("화면 스타일 (iPad 화면을 탭해도 바뀌어요)", DashboardStyle.allCases.map { ($0.title, $0.rawValue) }, #selector(pickStyle(_:))))
         menu.addItem(choiceMenu("화면 모드", Appearance.allCases.map { ($0.title, $0.rawValue) }, #selector(pickAppearance(_:))))
         menu.addItem(.separator())
-        for service in AccountService.allCases {
+        menu.addItem(choiceMenu("오른쪽 칸", [(AccountService.antigravity.title, AccountService.antigravity.rawValue),
+                                                ("Gemini 앱(채팅)", AccountService.gemini.rawValue)], #selector(pickSecond(_:))))
+        menu.addItem(.separator())
+        for service in AccountService.web {
             let login = menu.addItem(withTitle: "\(service.title) 로그인…", action: #selector(login(_:)), keyEquivalent: "")
             login.target = self
             login.representedObject = service.rawValue
         }
-        for service in AccountService.allCases {
+        for service in AccountService.web {
             let logout = menu.addItem(withTitle: "\(service.title) 로그아웃", action: #selector(logout(_:)), keyEquivalent: "")
             logout.target = self
             logout.representedObject = service.rawValue
@@ -221,6 +224,10 @@ func sidecarScreen() -> NSScreen? {
         if let v = sender.representedObject as? String, let style = DashboardStyle(rawValue: v) { settings.style = style }
     }
 
+    @objc func pickSecond(_ sender: NSMenuItem) {
+        if let v = sender.representedObject as? String, let s = AccountService(rawValue: v) { settings.second = s }
+    }
+
     @objc func pickAppearance(_ sender: NSMenuItem) {
         if let v = sender.representedObject as? String, let a = Appearance(rawValue: v) { settings.appearance = a }
     }
@@ -230,7 +237,7 @@ func sidecarScreen() -> NSScreen? {
         for item in menu.items {
             for sub in item.submenu?.items ?? [] {
                 let v = sub.representedObject as? String
-                sub.state = (v == settings.style.rawValue || v == settings.appearance.rawValue) ? .on : .off
+                sub.state = [settings.style.rawValue, settings.appearance.rawValue, settings.second.rawValue].contains(v ?? "") ? .on : .off
             }
         }
     }

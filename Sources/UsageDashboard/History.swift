@@ -40,8 +40,11 @@ final class UsageHistory: ObservableObject {
 
     func record(_ service: AccountService, gauges: [LimitGauge], at date: Date) {
         var changed = false
+        var seen = Set<String>()
         for (i, g) in gauges.enumerated() {
             let id = HistoryKey(service: service, tag: gaugeTag(g.label, index: i)).id
+            // 같은 종류 한도가 여럿이면(예: 모델별 주간 한도) 첫 번째만 그래프에 기록한다
+            guard seen.insert(id).inserted else { continue }
             var list = series[id] ?? []
             // 같은 값을 짧은 간격으로 또 읽었으면 건너뛴다
             if let last = list.last, last.v == g.percent, date.timeIntervalSince(last.t) < 4 * 60 { continue }

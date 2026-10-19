@@ -32,6 +32,8 @@ enum Appearance: String, CaseIterable, Identifiable {
 final class DisplaySettings: ObservableObject {
     @Published var style: DashboardStyle { didSet { save() } }
     @Published var appearance: Appearance { didSet { save() } }
+    /// 오른쪽 칸에 보여 줄 서비스 (Antigravity 또는 Gemini 앱)
+    @Published var second: AccountService { didSet { save() } }
     /// 스냅숏처럼 한 번만 바꿔 볼 때는 저장하지 않는다
     var persist = true
 
@@ -39,6 +41,7 @@ final class DisplaySettings: ObservableObject {
         let d = UserDefaults.standard
         style = d.string(forKey: "style").flatMap(DashboardStyle.init(rawValue:)) ?? .retro
         appearance = d.string(forKey: "appearance").flatMap(Appearance.init(rawValue:)) ?? .dark
+        second = d.string(forKey: "second").flatMap(AccountService.init(rawValue:)).flatMap { $0 == .claude ? nil : $0 } ?? .antigravity
     }
 
     func nextStyle() {
@@ -50,19 +53,22 @@ final class DisplaySettings: ObservableObject {
         guard persist else { return }
         UserDefaults.standard.set(style.rawValue, forKey: "style")
         UserDefaults.standard.set(appearance.rawValue, forKey: "appearance")
+        UserDefaults.standard.set(second.rawValue, forKey: "second")
     }
 }
 
 /// 한 번 그릴 때 필요한 값 모음
 struct DashboardModel {
     let claude: AccountState
-    let gemini: AccountState
+    /// 오른쪽 칸 서비스와 그 상태
+    let secondService: AccountService
+    let second: AccountState
     let history: UsageHistory
     let now: Date
     /// 1초마다 바뀐다 (깜빡이는 커서·시계 콜론용)
     let blink: Bool
 
-    func state(_ s: AccountService) -> AccountState { s == .claude ? claude : gemini }
+    func state(_ s: AccountService) -> AccountState { s == .claude ? claude : second }
 }
 
 extension AccountState {
@@ -87,8 +93,12 @@ extension AccountState {
         switch self {
         case .ok: return nil
         case .loading: return ("불러오는 중", "사용량 페이지를 읽고 있어요")
-        case .needsLogin: return ("로그인이 필요해요", "Mac 메뉴 막대의 대시보드 아이콘 → \(service.title) 로그인…")
-        case .failed(let reason): return (reason, "메뉴 막대에서 새로고침해 보세요")
+        case .needsLogin:
+            return ("로그인이 필요해요", service == .antigravity ? "터미널에서 agy를 실행해 로그인해 주세요"
+                                                          : "Mac 메뉴 막대의 대시보드 아이콘 → \(service.title) 로그인…")
+        case .failed(let reason):
+            return (reason, service == .antigravity && agyPath() == nil ? "README의 Antigravity CLI 설치 방법을 참고해 주세요"
+                                                                         : "메뉴 막대에서 새로고침해 보세요")
         }
     }
 }
@@ -106,7 +116,7 @@ func dateText(_ date: Date) -> String {
 func gaugeTag(_ label: String, index: Int) -> String {
     let l = label.lowercased()
     if l.contains("주") || l.contains("week") { return "WEEK" }
-    if l.contains("세션") || l.contains("현재") || l.contains("session") || l.contains("current") { return "NOW" }
+    if l.contains("세션") || l.contains("현재") || l.contains("5시간") || l.contains("session") || l.contains("current") || l.contains("five hour") { return "NOW" }
     return "LIMIT \(index + 1)"
 }
 
@@ -130,7 +140,8 @@ struct DashboardView: View {
         AppearanceScope(appearance: settings.appearance) {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let model = DashboardModel(
-                    claude: accounts.state(.claude), gemini: accounts.state(.gemini),
+                    claude: accounts.state(.claude),
+                    secondService: settings.second, second: accounts.state(settings.second),
                     history: history,
                     now: context.date, blink: Int(context.date.timeIntervalSince1970) % 2 == 0)
                 Group {

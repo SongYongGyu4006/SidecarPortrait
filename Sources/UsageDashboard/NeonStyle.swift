@@ -76,7 +76,7 @@ struct NeonDashboard: View {
             }
             HStack(spacing: 24) {
                 panel(.claude, t.claude, t)
-                panel(.gemini, t.gemini, t)
+                panel(m.secondService, t.gemini, t)
             }
             neonBox(t.grid.opacity(1), t) {
                 HistoryGrid(m: m, claude: t.claude, gemini: t.gemini,
