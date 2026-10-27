@@ -2,7 +2,7 @@
 // 기기 펌웨어는 그대로 두고, 사진 앨범 기능에 JPEG 한 장을 올린 뒤 그 이미지를 표시하게 한다.
 //   POST /doUpload?dir=/image/  (multipart, 필드 이름 file)
 //   GET  /set?img=/image/ai-usage.jpg
-// 올릴 때마다 기기 플래시에 쓰므로, 숫자가 바뀌었을 때만 올린다.
+// 올릴 때마다 기기 플래시에 쓰므로, 숫자가 바뀌었을 때와 화면의 "기준" 시각이 1시간 지났을 때만 올린다.
 import AppKit
 import SwiftUI
 
@@ -22,17 +22,28 @@ enum DevicePush {
         set { UserDefaults.standard.set(newValue, forKey: "deviceLastSent") }
     }
 
-    /// 화면에 들어갈 값이 바뀌었으면 그려서 보낸다
+    /// 마지막으로 보낸 시각
+    private static var lastSentAt: Date? {
+        get { UserDefaults.standard.object(forKey: "deviceLastSentAt") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "deviceLastSentAt") }
+    }
+
+    /// 값이 그대로여도 이만큼 지나면 "기준" 시각을 새로 고쳐 다시 보낸다 (하루 24번 정도라 플래시 부담이 작다)
+    static let refreshInterval: TimeInterval = 3600
+
+    /// 화면에 들어갈 값이 바뀌었거나 마지막으로 보낸 지 1시간이 지났으면 그려서 보낸다
     @MainActor static func pushIfChanged(claude: AccountState, second: AccountService, secondState: AccountState,
                                          force: Bool = false, completion: ((String) -> Void)? = nil) {
         guard let host else { completion?("기기 주소가 없어요"); return }
         let view = MiniUsageView(claude: claude, second: second, secondState: secondState, now: Date())
-        guard force || view.signature != lastSent else { completion?("바뀐 값이 없어 보내지 않았어요"); return }
+        let stale = lastSentAt.map { Date().timeIntervalSince($0) >= refreshInterval - 60 } ?? true
+        guard force || stale || view.signature != lastSent else { completion?("바뀐 값이 없어 보내지 않았어요"); return }
         guard let jpeg = render(view) else { completion?("그리기 실패"); return }
         upload(jpeg, to: host) { error in
             DispatchQueue.main.async {
                 if let error { return completion?("보내기 실패: \(error)") ?? () }
                 lastSent = view.signature
+                lastSentAt = Date()
                 completion?("보냈어요 (\(jpeg.count / 1024)KB)")
             }
         }
