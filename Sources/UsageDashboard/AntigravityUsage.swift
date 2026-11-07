@@ -37,30 +37,27 @@ func koreanResetText(_ date: Date?, now: Date = Date()) -> String? {
     return "\(f.string(from: date))에 초기화"
 }
 
-/// 표시할 한도: 5시간 한도와 주간 한도에서 각각 가장 많이 쓴 줄(같으면 Gemini 모델 공통 한도),
-/// 그다음 실제로 쓴 다른 한도 하나. 모델별 한도(예: Gemini 4 Argon 주간)가 따로 줄어들기 때문이다.
+/// 표시할 한도: Antigravity 안의 Claude·GPT 모델 주간 한도와 Gemini 4 Argon 주간 한도.
+/// 둘 중 하나가 출력에 없으면(모델 이름이 바뀌었을 때 등) 가장 많이 쓴 다른 한도로 채운다.
 func antigravityGauges(_ rows: [AgyRow]) -> [LimitGauge] {
     func isFiveHour(_ row: AgyRow) -> Bool { row.name.localizedCaseInsensitiveContains("five hour") }
     func isWeekly(_ row: AgyRow) -> Bool { row.name.localizedCaseInsensitiveContains("week") }
+    func isClaudeGPT(_ row: AgyRow) -> Bool { row.group.localizedCaseInsensitiveContains("claude") }
+    func isArgon(_ row: AgyRow) -> Bool { row.group.localizedCaseInsensitiveContains("argon") }
     func label(_ row: AgyRow) -> String {
         let span = isFiveHour(row) ? "5시간" : isWeekly(row) ? "주간" : row.name
         if row.group == "Gemini Models" { return "Gemini \(span)" }
-        if row.group.localizedCaseInsensitiveContains("claude") { return "Claude·GPT \(span)" }
+        if isClaudeGPT(row) { return "Claude·GPT \(span)" }
         return "\(row.group) \(span)"
     }
     func gauge(_ row: AgyRow) -> LimitGauge {
         LimitGauge(label: label(row), percent: max(0, min(100, 100 - row.remaining)), reset: koreanResetText(row.reset))
     }
-    func mostUsed(_ candidates: [AgyRow]) -> AgyRow? {
-        candidates.min { a, b in
-            a.remaining != b.remaining ? a.remaining < b.remaining : a.group == "Gemini Models" && b.group != "Gemini Models"
-        }
+    var picked = [rows.first { isClaudeGPT($0) && isWeekly($0) }, rows.first { isArgon($0) && isWeekly($0) }].compactMap { $0 }
+    for row in rows.sorted(by: { $0.remaining < $1.remaining }) where picked.count < 2 {
+        if !picked.contains(where: { $0.group == row.group && $0.name == row.name }) { picked.append(row) }
     }
-    var picked = [mostUsed(rows.filter(isFiveHour)), mostUsed(rows.filter(isWeekly))].compactMap { $0 }
-    if let extra = mostUsed(rows.filter { r in r.remaining < 100 && !picked.contains { $0.group == r.group && $0.name == r.name } }) {
-        picked.append(extra)
-    }
-    return (picked.isEmpty ? Array(rows.prefix(2)) : picked).map(gauge)
+    return picked.map(gauge)
 }
 
 /// agy를 백그라운드에서 실행하고 결과를 메인 스레드로 돌려준다

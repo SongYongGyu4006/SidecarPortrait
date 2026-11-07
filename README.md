@@ -88,7 +88,7 @@ Scripts/build-app.sh UsageDashboard --install   # ~/Applications/UsageDashboard.
 - **계정 한도(모든 기기 합산)**: claude.ai와 Gemini의 공식 사용량 페이지(`claude.ai/settings/usage`, `gemini.google.com/usage`)를 보이지 않는 웹 뷰로 5분마다 열어 "n% 사용됨"과 초기화 시각만 읽어 원형 게이지로 그려요.
   - 처음 한 번 메뉴 막대 아이콘 → **Claude 로그인…**, **Gemini 로그인…**에서 직접 로그인하고 창을 닫으세요. 로그인 정보는 이 앱 전용 웹 저장소에만 남고, 메뉴의 **로그아웃**으로 지울 수 있어요.
   - 다른 앱의 토큰이나 키체인은 읽지 않아요. 페이지 구조가 바뀌면 "사용량 표시를 찾지 못했어요"가 떠요. 주소는 `defaults write io.github.songyonggyu4006.UsageDashboard claudeUsageURL <주소>`(또는 `geminiUsageURL`)로 바꿀 수 있어요.
-- **Antigravity 한도**: Antigravity는 Gemini 앱(채팅)과 한도가 따로 있고 웹 페이지가 없어서, 공식 [Antigravity CLI](https://antigravity.google/docs/cli-getting-started)의 `agy -p /usage`를 5분마다 빈 임시 폴더에서 실행해 읽어요(대화 기록은 남지 않아요). 5시간·주간 한도마다 가장 많이 쓴 줄(모델별 한도 포함)과, 실제로 쓴 다른 한도 하나를 보여 줘요. 먼저 CLI를 설치하고 한 번 로그인해 두세요.
+- **Antigravity 한도**: Antigravity는 Gemini 앱(채팅)과 한도가 따로 있고 웹 페이지가 없어서, 공식 [Antigravity CLI](https://antigravity.google/docs/cli-getting-started)의 `agy -p /usage`를 5분마다 빈 임시 폴더에서 실행해 읽어요(대화 기록은 남지 않아요). Antigravity 안의 **Claude·GPT 모델 주간 한도**와 **Gemini 4 Argon 주간 한도**를 보여 주고, 둘 중 하나가 출력에 없으면 가장 많이 쓴 다른 한도로 채워요. 먼저 CLI를 설치하고 한 번 로그인해 두세요.
 
   ```bash
   curl -fsSL https://antigravity.google/cli/install.sh | bash

@@ -92,7 +92,7 @@ struct MiniUsageView: View {
     private let t = RetroTheme.dark
 
     /// 화면 모양을 바꾸면 올린다. 값이 같아도 새 모양을 한 번은 보내기 위해서다.
-    static let design = 2
+    static let design = 3
 
     /// 화면 내용을 대표하는 문자열. 같으면 다시 보내지 않는다.
     /// 초기화 시각은 시간 단위로만 비교한다 (안 쓴 한도는 초기화 시각이 조금씩 계속 밀리기 때문)
@@ -134,7 +134,7 @@ struct MiniUsageView: View {
                 let tint = g.percent >= 80 ? t.danger : color
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .bottom) {
-                        PixelText(gaugeTag(g.label, index: i), px: 1.6, color: t.dim, glow: false)
+                        PixelText(miniTag(service, g, index: i), px: 1.6, color: t.dim, glow: false)
                         Text(shortReset(g)).font(monoFont(9)).foregroundStyle(t.dim).lineLimit(1)
                         Spacer(minLength: 2)
                         PixelText("\(g.percent)%", px: 3, color: tint, glow: false)
@@ -144,6 +144,14 @@ struct MiniUsageView: View {
                 }
             }
         }
+    }
+
+    /// 줄 이름표. Antigravity는 주간 한도 두 개라 모델 묶음 이름으로 구분한다.
+    func miniTag(_ service: AccountService, _ g: LimitGauge, index: Int) -> String {
+        guard service == .antigravity else { return gaugeTag(g.label, index: index) }
+        if g.label.localizedCaseInsensitiveContains("claude") { return "CL/GPT" }
+        if g.label.localizedCaseInsensitiveContains("argon") { return "ARGON" }
+        return gaugeTag(g.label, index: index)
     }
 
     /// "↺ 16:20" 또는 "↺ 10/21 22:00". 남은 시간은 매분 바뀌어 매번 다시 보내게 되므로 시각만 쓴다.
