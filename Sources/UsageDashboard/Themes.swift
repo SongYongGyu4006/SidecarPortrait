@@ -115,6 +115,8 @@ func dateText(_ date: Date) -> String {
 /// 페이지의 한도 이름을 짧은 영어 태그로 바꾼다
 func gaugeTag(_ label: String, index: Int) -> String {
     let l = label.lowercased()
+    // Antigravity의 모델 전용 한도는 따로 기록한다 (Claude·GPT 주간과 함께 보여 주므로)
+    if l.contains("argon") { return "ARGON" }
     if l.contains("주") || l.contains("week") { return "WEEK" }
     if l.contains("세션") || l.contains("현재") || l.contains("5시간") || l.contains("session") || l.contains("current") || l.contains("five hour") { return "NOW" }
     // 이름을 알아보지 못하면 사용량 페이지의 순서(현재 → 주간)를 따른다

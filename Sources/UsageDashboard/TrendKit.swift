@@ -216,13 +216,17 @@ struct HistoryGrid: View {
         func gauge(_ tag: String) -> LimitGauge? {
             gauges.enumerated().first { gaugeTag($0.element.label, index: $0.offset) == tag }?.element
         }
+        // Antigravity는 주간 한도 두 개(Claude·GPT, Gemini 4 Argon)를 보여 준다
+        let cells: [(title: String, tag: String, span: TrendSpan)] = service == .antigravity
+            ? [("Claude·GPT 주간 · 7일", "WEEK", .week), ("Argon 주간 · 7일", "ARGON", .week)]
+            : [("현재 · 24시간", "NOW", .day), ("주간 · 7일", "WEEK", .week)]
         return VStack(alignment: .leading, spacing: 8) {
             serviceLabel(service, color)
             HStack(spacing: 20) {
-                TrendCell(title: "현재 · 24시간", gauge: gauge("NOW"), samples: m.history.samples(HistoryKey(service: service, tag: "NOW")),
-                          span: .day, now: m.now, color: color, look: look)
-                TrendCell(title: "주간 · 7일", gauge: gauge("WEEK"), samples: m.history.samples(HistoryKey(service: service, tag: "WEEK")),
-                          span: .week, now: m.now, color: color, look: look)
+                ForEach(cells, id: \.tag) { cell in
+                    TrendCell(title: cell.title, gauge: gauge(cell.tag), samples: m.history.samples(HistoryKey(service: service, tag: cell.tag)),
+                              span: cell.span, now: m.now, color: color, look: look)
+                }
             }
         }
         .frame(maxWidth: .infinity)
